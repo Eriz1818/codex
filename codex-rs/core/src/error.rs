@@ -71,7 +71,7 @@ pub enum CodexErr {
     Stream(String, Option<Duration>),
 
     #[error(
-        "Codex ran out of room in the model's context window. Start a new conversation or clear earlier history before retrying."
+        "Codex ran out of room in the model's context window. Try `/compact` to summarize history or enable `/autocompact` to do it automatically. Otherwise start a new conversation or clear earlier history before retrying."
     )]
     ContextWindowExceeded,
 

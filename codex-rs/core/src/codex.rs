@@ -650,7 +650,9 @@ impl Session {
                     .await
                     .map(Arc::new);
         }
-        let state = SessionState::new(session_configuration.clone());
+        let prefs = crate::prefs::load(&config.codex_home).await;
+        let mut state = SessionState::new(session_configuration.clone());
+        state.set_auto_compact_enabled(prefs.auto_compact_enabled);
 
         let services = SessionServices {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
@@ -766,6 +768,15 @@ impl Session {
     async fn set_auto_compact_enabled(&self, enabled: bool) {
         let mut state = self.state.lock().await;
         state.set_auto_compact_enabled(enabled);
+    }
+
+    async fn codex_home(&self) -> PathBuf {
+        let state = self.state.lock().await;
+        state
+            .session_configuration
+            .original_config_do_not_use
+            .codex_home
+            .clone()
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -1746,6 +1757,13 @@ mod handlers {
 
     pub async fn set_auto_compact(sess: &Session, enabled: bool) {
         sess.set_auto_compact_enabled(enabled).await;
+        let codex_home = sess.codex_home().await;
+        if let Err(err) = crate::prefs::set_auto_compact_enabled(&codex_home, enabled).await {
+            tracing::warn!(
+                "failed to persist auto-compact preference at {}: {err:#}",
+                codex_home.display()
+            );
+        }
     }
 
     pub async fn user_input_or_turn(
