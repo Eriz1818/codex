@@ -62,6 +62,7 @@ struct StatusHistoryCell {
     approval: String,
     sandbox: String,
     agents_summary: String,
+    auto_compact_enabled: bool,
     account: Option<StatusAccountDisplay>,
     session_id: Option<String>,
     token_usage: StatusTokenUsageData,
@@ -73,6 +74,7 @@ pub(crate) fn new_status_output(
     config: &Config,
     auth_manager: &AuthManager,
     model_family: &ModelFamily,
+    auto_compact_enabled: bool,
     total_usage: &TokenUsage,
     context_usage: Option<&TokenUsage>,
     session_id: &Option<ConversationId>,
@@ -86,6 +88,7 @@ pub(crate) fn new_status_output(
         config,
         auth_manager,
         model_family,
+        auto_compact_enabled,
         total_usage,
         context_usage,
         session_id,
@@ -104,6 +107,7 @@ impl StatusHistoryCell {
         config: &Config,
         auth_manager: &AuthManager,
         model_family: &ModelFamily,
+        auto_compact_enabled: bool,
         total_usage: &TokenUsage,
         context_usage: Option<&TokenUsage>,
         session_id: &Option<ConversationId>,
@@ -157,6 +161,7 @@ impl StatusHistoryCell {
             approval,
             sandbox,
             agents_summary,
+            auto_compact_enabled,
             account,
             session_id,
             token_usage,
@@ -331,11 +336,17 @@ impl HistoryCell for StatusHistoryCell {
             }
         });
 
-        let mut labels: Vec<String> =
-            vec!["Model", "Directory", "Approval", "Sandbox", "Agents.md"]
-                .into_iter()
-                .map(str::to_string)
-                .collect();
+        let mut labels: Vec<String> = vec![
+            "Model",
+            "Directory",
+            "Approval",
+            "Sandbox",
+            "Agents.md",
+            "Auto-compact",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
         let mut seen: BTreeSet<String> = labels.iter().cloned().collect();
 
         if account_value.is_some() {
@@ -384,6 +395,14 @@ impl HistoryCell for StatusHistoryCell {
         lines.push(formatter.line("Approval", vec![Span::from(self.approval.clone())]));
         lines.push(formatter.line("Sandbox", vec![Span::from(self.sandbox.clone())]));
         lines.push(formatter.line("Agents.md", vec![Span::from(self.agents_summary.clone())]));
+        lines.push(formatter.line(
+            "Auto-compact",
+            vec![Span::from(if self.auto_compact_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            })],
+        ));
 
         if let Some(account_value) = account_value {
             lines.push(formatter.line("Account", vec![Span::from(account_value)]));

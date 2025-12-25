@@ -98,6 +98,7 @@ use crate::bottom_pane::SelectionAction;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::custom_prompt_view::CustomPromptView;
+use crate::bottom_pane::parse_slash_name;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
 use crate::clipboard_paste::paste_image_to_temp_png;
 use crate::diff_render::display_path_for;
@@ -1429,6 +1430,8 @@ impl ChatWidget {
         let mut rng = rand::rng();
         let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
         let codex_op_tx = spawn_agent(config.clone(), app_event_tx.clone(), conversation_manager);
+        let auto_compact_enabled =
+            codex_core::prefs::load_blocking(&config.codex_home).auto_compact_enabled;
 
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
@@ -1454,7 +1457,7 @@ impl ChatWidget {
                 initial_prompt.unwrap_or_default(),
                 initial_images,
             ),
-            auto_compact_enabled: false,
+            auto_compact_enabled,
             token_info: None,
             rate_limit_snapshot: None,
             plan_type: None,
@@ -1517,6 +1520,8 @@ impl ChatWidget {
 
         let codex_op_tx =
             spawn_agent_from_existing(conversation, session_configured, app_event_tx.clone());
+        let auto_compact_enabled =
+            codex_core::prefs::load_blocking(&config.codex_home).auto_compact_enabled;
 
         let mut widget = Self {
             app_event_tx: app_event_tx.clone(),
@@ -1542,7 +1547,7 @@ impl ChatWidget {
                 initial_prompt.unwrap_or_default(),
                 initial_images,
             ),
-            auto_compact_enabled: false,
+            auto_compact_enabled,
             token_info: None,
             rate_limit_snapshot: None,
             plan_type: None,
@@ -1953,6 +1958,53 @@ impl ChatWidget {
             return;
         }
 
+        if image_paths.is_empty()
+            && text.lines().count() == 1
+            && let Some((name, rest)) = parse_slash_name(text.as_str())
+            && name == "autocompact"
+        {
+            let args: Vec<&str> = rest.split_whitespace().collect();
+            let next = match args.as_slice() {
+                [] => Some(!self.auto_compact_enabled),
+                [arg] => match arg.to_ascii_lowercase().as_str() {
+                    "on" | "enable" | "true" => Some(true),
+                    "off" | "disable" | "false" => Some(false),
+                    "toggle" => Some(!self.auto_compact_enabled),
+                    "status" | "show" => None,
+                    _ => {
+                        self.add_info_message(
+                            "Usage: /autocompact [on|off|toggle|status]".to_string(),
+                            None,
+                        );
+                        return;
+                    }
+                },
+                _ => {
+                    self.add_info_message(
+                        "Usage: /autocompact [on|off|toggle|status]".to_string(),
+                        None,
+                    );
+                    return;
+                }
+            };
+
+            if let Some(enabled) = next {
+                self.auto_compact_enabled = enabled;
+                let status = if enabled { "enabled" } else { "disabled" };
+                self.add_info_message(format!("Auto-compact {status}."), None);
+                self.app_event_tx
+                    .send(AppEvent::CodexOp(Op::SetAutoCompact { enabled }));
+            } else {
+                let status = if self.auto_compact_enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                };
+                self.add_info_message(format!("Auto-compact is currently {status}."), None);
+            }
+            return;
+        }
+
         if !text.is_empty() {
             items.push(UserInput::Text { text: text.clone() });
         }
@@ -2269,6 +2321,7 @@ impl ChatWidget {
             &self.config,
             self.auth_manager.as_ref(),
             &self.model_family,
+            self.auto_compact_enabled,
             total_usage,
             context_usage,
             &self.conversation_id,

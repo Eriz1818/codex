@@ -41,6 +41,7 @@ mod scroll_state;
 mod selection_popup_common;
 mod textarea;
 pub(crate) use feedback_view::FeedbackNoteView;
+pub(crate) use prompt_args::parse_slash_name;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CancellationEvent {
