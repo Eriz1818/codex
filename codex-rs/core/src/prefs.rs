@@ -10,7 +10,7 @@ use tokio::task;
 
 const PREFS_FILE: &str = "state.toml";
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct UserPrefs {
     #[serde(default)]
     pub auto_compact_enabled: bool,
@@ -72,4 +72,29 @@ pub async fn set_auto_compact_enabled(codex_home: &Path, enabled: bool) -> anyho
     })
     .await
     .context("preferences persistence task panicked")?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn load_defaults_when_missing() {
+        let dir = tempdir().expect("create tempdir");
+        assert_eq!(load_blocking(dir.path()), UserPrefs::default());
+    }
+
+    #[test]
+    fn store_and_load_roundtrip() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let prefs = UserPrefs {
+            auto_compact_enabled: true,
+        };
+
+        store_blocking(dir.path(), &prefs)?;
+        assert_eq!(load_blocking(dir.path()), prefs);
+
+        Ok(())
+    }
 }
