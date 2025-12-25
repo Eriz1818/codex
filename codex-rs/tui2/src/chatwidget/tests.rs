@@ -375,6 +375,7 @@ async fn make_chatwidget_manual(
         models_manager: Arc::new(ModelsManager::new(auth_manager)),
         session_header: SessionHeader::new(resolved_model.clone()),
         initial_user_message: None,
+        auto_compact_enabled: false,
         token_info: None,
         rate_limit_snapshot: None,
         plan_type: None,

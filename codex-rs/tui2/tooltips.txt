@@ -1,4 +1,5 @@
 Use /compact when the conversation gets long to summarize history and free up context.
+Use /autocompact to toggle automatic compaction.
 Start a fresh idea with /new; the previous session stays in history.
 Use /feedback to send logs to the maintainers when something looks off.
 Switch models or reasoning effort quickly with /model.

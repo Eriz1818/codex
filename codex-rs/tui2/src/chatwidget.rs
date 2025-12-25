@@ -289,6 +289,7 @@ pub(crate) struct ChatWidget {
     models_manager: Arc<ModelsManager>,
     session_header: SessionHeader,
     initial_user_message: Option<UserMessage>,
+    auto_compact_enabled: bool,
     token_info: Option<TokenUsageInfo>,
     rate_limit_snapshot: Option<RateLimitSnapshotDisplay>,
     plan_type: Option<PlanType>,
@@ -1313,6 +1314,7 @@ impl ChatWidget {
                 initial_prompt.unwrap_or_default(),
                 initial_images,
             ),
+            auto_compact_enabled: false,
             token_info: None,
             rate_limit_snapshot: None,
             plan_type: None,
@@ -1398,6 +1400,7 @@ impl ChatWidget {
                 initial_prompt.unwrap_or_default(),
                 initial_images,
             ),
+            auto_compact_enabled: false,
             token_info: None,
             rate_limit_snapshot: None,
             plan_type: None,
@@ -1563,6 +1566,14 @@ impl ChatWidget {
             SlashCommand::Compact => {
                 self.clear_token_usage();
                 self.app_event_tx.send(AppEvent::CodexOp(Op::Compact));
+            }
+            SlashCommand::Autocompact => {
+                self.auto_compact_enabled = !self.auto_compact_enabled;
+                let enabled = self.auto_compact_enabled;
+                let status = if enabled { "enabled" } else { "disabled" };
+                self.add_info_message(format!("Auto-compact {status}."), None);
+                self.app_event_tx
+                    .send(AppEvent::CodexOp(Op::SetAutoCompact { enabled }));
             }
             SlashCommand::Review => {
                 self.open_review_popup();
