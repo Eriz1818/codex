@@ -73,6 +73,11 @@ Codex CLI supports a rich set of configuration options, with preferences stored 
 
 See the [Execpolicy quickstart](./docs/execpolicy.md) to set up rules that govern what commands Codex can execute.
 
+### Keeping context under control (`/compact`, `/autocompact`)
+
+- Use `/compact` to summarize the conversation and free up context.
+- Use `/autocompact` to automatically compact when the conversation gets close to the model’s context limit (supports `on|off|toggle|status` and persists across sessions).
+
 ### Docs & FAQ
 
 - [**Getting started**](./docs/getting-started.md)
