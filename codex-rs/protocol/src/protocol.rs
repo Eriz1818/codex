@@ -141,6 +141,11 @@ pub enum Op {
         summary: Option<ReasoningSummaryConfig>,
     },
 
+    /// Enable/disable automatic compaction of conversation history.
+    ///
+    /// Manual compaction via `/compact` remains available regardless of this setting.
+    SetAutoCompact { enabled: bool },
+
     /// Approve a command execution
     ExecApproval {
         /// The id of the submission we are approving
@@ -896,16 +901,9 @@ impl TokenUsageInfo {
     }
 
     pub fn fill_to_context_window(&mut self, context_window: i64) {
-        let previous_total = self.total_token_usage.total_tokens;
-        let delta = (context_window - previous_total).max(0);
-
         self.model_context_window = Some(context_window);
-        self.total_token_usage = TokenUsage {
-            total_tokens: context_window,
-            ..TokenUsage::default()
-        };
         self.last_token_usage = TokenUsage {
-            total_tokens: delta,
+            total_tokens: context_window,
             ..TokenUsage::default()
         };
     }

@@ -14,6 +14,7 @@ pub(crate) struct SessionState {
     pub(crate) session_configuration: SessionConfiguration,
     pub(crate) history: ContextManager,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
+    pub(crate) auto_compact_enabled: bool,
 }
 
 impl SessionState {
@@ -24,6 +25,7 @@ impl SessionState {
             session_configuration,
             history,
             latest_rate_limits: None,
+            auto_compact_enabled: false,
         }
     }
 
@@ -80,6 +82,14 @@ impl SessionState {
 
     pub(crate) fn get_total_token_usage(&self) -> i64 {
         self.history.get_total_token_usage()
+    }
+
+    pub(crate) fn auto_compact_enabled(&self) -> bool {
+        self.auto_compact_enabled
+    }
+
+    pub(crate) fn set_auto_compact_enabled(&mut self, enabled: bool) {
+        self.auto_compact_enabled = enabled;
     }
 }
 

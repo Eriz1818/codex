@@ -758,6 +758,16 @@ impl Session {
         state.get_total_token_usage()
     }
 
+    async fn auto_compact_enabled(&self) -> bool {
+        let state = self.state.lock().await;
+        state.auto_compact_enabled()
+    }
+
+    async fn set_auto_compact_enabled(&self, enabled: bool) {
+        let mut state = self.state.lock().await;
+        state.set_auto_compact_enabled(enabled);
+    }
+
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
         let turn_context = self.new_default_turn().await;
         match conversation_history {
@@ -1609,6 +1619,9 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                 )
                 .await;
             }
+            Op::SetAutoCompact { enabled } => {
+                handlers::set_auto_compact(&sess, enabled).await;
+            }
             Op::UserInput { .. } | Op::UserTurn { .. } => {
                 handlers::user_input_or_turn(&sess, sub.id.clone(), sub.op, &mut previous_context)
                     .await;
@@ -1729,6 +1742,10 @@ mod handlers {
             })
             .await;
         }
+    }
+
+    pub async fn set_auto_compact(sess: &Session, enabled: bool) {
+        sess.set_auto_compact_enabled(enabled).await;
     }
 
     pub async fn user_input_or_turn(
@@ -2212,17 +2229,38 @@ pub(crate) async fn run_task(
         return None;
     }
 
+    let auto_compact_enabled = sess.auto_compact_enabled().await;
+    let context_window = turn_context.client.get_model_context_window();
     let auto_compact_limit = turn_context
         .client
-        .get_model_family()
-        .auto_compact_token_limit()
-        .unwrap_or(i64::MAX);
-    let total_usage_tokens = sess.get_total_token_usage().await;
-    if total_usage_tokens >= auto_compact_limit {
+        .config()
+        .model_auto_compact_token_limit
+        .filter(|limit| *limit > 0)
+        .unwrap_or_else(|| {
+            context_window
+                .map(|window| window.saturating_mul(9) / 10)
+                .unwrap_or(i64::MAX)
+        });
+
+    let mut total_usage_tokens = sess.get_total_token_usage().await;
+    if auto_compact_enabled && total_usage_tokens >= auto_compact_limit {
         run_auto_compact(&sess, &turn_context).await;
+        total_usage_tokens = sess.get_total_token_usage().await;
+    }
+
+    if let Some(context_window) = context_window
+        && total_usage_tokens >= context_window
+    {
+        sess.set_total_tokens_full(&turn_context).await;
+        sess.send_event(
+            &turn_context,
+            EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(None)),
+        )
+        .await;
+        return None;
     }
     let event = EventMsg::TaskStarted(TaskStartedEvent {
-        model_context_window: turn_context.client.get_model_context_window(),
+        model_context_window: context_window,
     });
     sess.send_event(&turn_context, event).await;
 
@@ -2303,8 +2341,19 @@ pub(crate) async fn run_task(
                 let token_limit_reached = total_usage_tokens >= auto_compact_limit;
 
                 // as long as compaction works well in getting us way below the token limit, we shouldn't worry about being in an infinite loop.
-                if token_limit_reached && needs_follow_up {
+                if auto_compact_enabled && token_limit_reached && needs_follow_up {
                     run_auto_compact(&sess, &turn_context).await;
+                    if let Some(context_window) = context_window
+                        && sess.get_total_token_usage().await >= context_window
+                    {
+                        sess.set_total_tokens_full(&turn_context).await;
+                        sess.send_event(
+                            &turn_context,
+                            EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(None)),
+                        )
+                        .await;
+                        break;
+                    }
                     continue;
                 }
 
