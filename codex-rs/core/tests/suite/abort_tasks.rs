@@ -21,6 +21,7 @@ use serde_json::json;
 /// function call, then interrupt the session and expect TurnAborted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn interrupt_long_running_tool_emits_turn_aborted() {
+    core_test_support::skip_if_no_network!();
     let command = "sleep 60";
 
     let args = json!({
@@ -68,6 +69,7 @@ async fn interrupt_long_running_tool_emits_turn_aborted() {
 /// responses server, and ensures the model receives the synthesized abort.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn interrupt_tool_records_history_entries() {
+    core_test_support::skip_if_no_network!();
     let command = "sleep 60";
     let call_id = "call-history";
 

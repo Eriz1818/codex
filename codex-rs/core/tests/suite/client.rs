@@ -1524,8 +1524,8 @@ async fn context_window_error_sets_total_tokens_to_model_window() -> anyhow::Res
             event,
             EventMsg::TokenCount(payload)
                 if payload.info.as_ref().is_some_and(|info| {
-                    info.model_context_window == Some(info.total_token_usage.total_tokens)
-                        && info.total_token_usage.total_tokens > 0
+                    info.model_context_window.is_some_and(|window| window > 0)
+                        && info.last_token_usage.total_tokens == info.model_context_window.unwrap_or_default()
                 })
         )
     })
@@ -1540,10 +1540,7 @@ async fn context_window_error_sets_total_tokens_to_model_window() -> anyhow::Res
         .expect("token usage info present when context window is exceeded");
 
     assert_eq!(info.model_context_window, Some(EFFECTIVE_CONTEXT_WINDOW));
-    assert_eq!(
-        info.total_token_usage.total_tokens,
-        EFFECTIVE_CONTEXT_WINDOW
-    );
+    assert_eq!(info.last_token_usage.total_tokens, EFFECTIVE_CONTEXT_WINDOW);
 
     let error_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Error(_))).await;
     let expected_context_window_message = CodexErr::ContextWindowExceeded.to_string();

@@ -21,6 +21,7 @@ use std::fs;
 
 #[tokio::test]
 async fn execpolicy_blocks_shell_invocation() -> Result<()> {
+    core_test_support::skip_if_no_network!(Ok(()));
     // TODO execpolicy doesn't parse powershell commands yet
     if cfg!(windows) {
         return Ok(());

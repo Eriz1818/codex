@@ -35,6 +35,7 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
     )
     .await?;
     let codex = harness.test().codex.clone();
+    codex.submit(Op::SetAutoCompact { enabled: true }).await?;
 
     let responses_mock = responses::mount_sse_sequence(
         harness.server(),
@@ -150,6 +151,7 @@ async fn remote_compact_runs_automatically() -> Result<()> {
     )
     .await?;
     let codex = harness.test().codex.clone();
+    codex.submit(Op::SetAutoCompact { enabled: true }).await?;
 
     mount_sse_once(
         harness.server(),

@@ -1564,6 +1564,8 @@ async fn run_scenario(scenario: &ScenarioSpec) -> Result<()> {
 #[tokio::test(flavor = "current_thread")]
 #[cfg(unix)]
 async fn approving_execpolicy_amendment_persists_policy_and_skips_future_prompts() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::UnlessTrusted;
     let sandbox_policy = SandboxPolicy::ReadOnly;

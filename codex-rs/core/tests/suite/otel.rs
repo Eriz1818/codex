@@ -35,6 +35,7 @@ use tracing_test::internal::MockWriter;
 #[tokio::test]
 #[traced_test]
 async fn responses_api_emits_api_request_event() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(&server, sse(vec![ev_completed("done")])).await;
@@ -72,6 +73,7 @@ async fn responses_api_emits_api_request_event() {
 #[tokio::test]
 #[traced_test]
 async fn process_sse_emits_tracing_for_output_item() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -108,6 +110,7 @@ async fn process_sse_emits_tracing_for_output_item() {
 #[tokio::test]
 #[traced_test]
 async fn process_sse_emits_failed_event_on_parse_error() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(&server, "data: not-json\n\n".to_string()).await;
@@ -147,6 +150,7 @@ async fn process_sse_emits_failed_event_on_parse_error() {
 #[tokio::test]
 #[traced_test]
 async fn process_sse_records_failed_event_when_stream_closes_without_completed() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(&server, sse(vec![ev_assistant_message("id", "hi")])).await;
@@ -186,6 +190,7 @@ async fn process_sse_records_failed_event_when_stream_closes_without_completed()
 #[tokio::test]
 #[traced_test]
 async fn process_sse_failed_event_records_response_error_message() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -246,6 +251,7 @@ async fn process_sse_failed_event_records_response_error_message() {
 #[tokio::test]
 #[traced_test]
 async fn process_sse_failed_event_logs_parse_error() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -300,6 +306,7 @@ async fn process_sse_failed_event_logs_parse_error() {
 #[tokio::test]
 #[traced_test]
 async fn process_sse_failed_event_logs_missing_error() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -344,6 +351,7 @@ async fn process_sse_failed_event_logs_missing_error() {
 #[tokio::test]
 #[traced_test]
 async fn process_sse_failed_event_logs_response_completed_parse_error() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -400,6 +408,7 @@ async fn process_sse_failed_event_logs_response_completed_parse_error() {
 #[tokio::test]
 #[traced_test]
 async fn process_sse_emits_completed_telemetry() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -452,6 +461,7 @@ async fn process_sse_emits_completed_telemetry() {
 
 #[tokio::test]
 async fn handle_responses_span_records_response_kind_and_tool_name() {
+    core_test_support::skip_if_no_network!();
     let buffer: &'static Mutex<Vec<u8>> = Box::leak(Box::new(Mutex::new(Vec::new())));
     let subscriber = tracing_subscriber::fmt()
         .with_level(true)
@@ -516,6 +526,7 @@ async fn handle_responses_span_records_response_kind_and_tool_name() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn record_responses_sets_span_fields_for_response_events() {
+    core_test_support::skip_if_no_network!();
     let buffer: &'static Mutex<Vec<u8>> = Box::leak(Box::new(Mutex::new(Vec::new())));
     let subscriber = tracing_subscriber::fmt()
         .with_level(true)
@@ -601,6 +612,7 @@ async fn record_responses_sets_span_fields_for_response_events() {
 #[tokio::test]
 #[traced_test]
 async fn handle_response_item_records_tool_result_for_custom_tool_call() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -671,6 +683,7 @@ async fn handle_response_item_records_tool_result_for_custom_tool_call() {
 #[tokio::test]
 #[traced_test]
 async fn handle_response_item_records_tool_result_for_function_call() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -738,6 +751,7 @@ async fn handle_response_item_records_tool_result_for_function_call() {
 #[tokio::test]
 #[traced_test]
 async fn handle_response_item_records_tool_result_for_local_shell_missing_ids() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -809,6 +823,7 @@ async fn handle_response_item_records_tool_result_for_local_shell_missing_ids() 
 #[tokio::test]
 #[traced_test]
 async fn handle_response_item_records_tool_result_for_local_shell_call() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -909,6 +924,7 @@ fn tool_decision_assertion<'a>(
 #[tokio::test]
 #[traced_test]
 async fn handle_container_exec_autoapprove_from_config_records_tool_decision() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
     mount_sse_once(
         &server,
@@ -962,6 +978,7 @@ async fn handle_container_exec_autoapprove_from_config_records_tool_decision() {
 #[tokio::test]
 #[traced_test]
 async fn handle_container_exec_user_approved_records_tool_decision() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
     mount_sse_once(
         &server,
@@ -1020,6 +1037,7 @@ async fn handle_container_exec_user_approved_records_tool_decision() {
 #[tokio::test]
 #[traced_test]
 async fn handle_container_exec_user_approved_for_session_records_tool_decision() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -1078,6 +1096,7 @@ async fn handle_container_exec_user_approved_for_session_records_tool_decision()
 #[tokio::test]
 #[traced_test]
 async fn handle_sandbox_error_user_approves_retry_records_tool_decision() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -1136,6 +1155,7 @@ async fn handle_sandbox_error_user_approves_retry_records_tool_decision() {
 #[tokio::test]
 #[traced_test]
 async fn handle_container_exec_user_denies_records_tool_decision() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -1194,6 +1214,7 @@ async fn handle_container_exec_user_denies_records_tool_decision() {
 #[tokio::test]
 #[traced_test]
 async fn handle_sandbox_error_user_approves_for_session_records_tool_decision() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(
@@ -1252,6 +1273,7 @@ async fn handle_sandbox_error_user_approves_for_session_records_tool_decision() 
 #[tokio::test]
 #[traced_test]
 async fn handle_sandbox_error_user_denies_records_tool_decision() {
+    core_test_support::skip_if_no_network!();
     let server = start_mock_server().await;
 
     mount_sse_once(

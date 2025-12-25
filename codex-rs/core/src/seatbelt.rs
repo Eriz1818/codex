@@ -176,6 +176,7 @@ mod tests {
 
     #[test]
     fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
+        core_test_support::skip_if_sandbox!();
         // Create a temporary workspace with two writable roots: one containing
         // top-level .git and .codex directories and one without them.
         let tmp = TempDir::new().expect("tempdir");

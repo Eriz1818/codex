@@ -379,6 +379,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_available_models_sorts_and_marks_default() {
+        core_test_support::skip_if_no_network!();
         let server = MockServer::start().await;
         let remote_models = vec![
             remote_model("priority-low", "Low", 1),
@@ -439,6 +440,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_available_models_uses_cache_when_fresh() {
+        core_test_support::skip_if_no_network!();
         let server = MockServer::start().await;
         let remote_models = vec![remote_model("cached", "Cached", 5)];
         let models_mock = mount_models_once(
@@ -494,6 +496,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_available_models_refetches_when_cache_stale() {
+        core_test_support::skip_if_no_network!();
         let server = MockServer::start().await;
         let initial_models = vec![remote_model("stale", "Stale", 1)];
         let initial_mock = mount_models_once(
@@ -569,6 +572,7 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_available_models_drops_removed_remote_models() {
+        core_test_support::skip_if_no_network!();
         let server = MockServer::start().await;
         let initial_models = vec![remote_model("remote-old", "Remote Old", 1)];
         let initial_mock = mount_models_once(

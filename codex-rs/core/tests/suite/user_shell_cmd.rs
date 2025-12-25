@@ -134,6 +134,8 @@ async fn user_shell_cmd_can_be_interrupted() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn user_shell_command_history_is_persisted_and_shared_with_model() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
     let server = responses::start_mock_server().await;
     let mut builder = core_test_support::test_codex::test_codex();
     let test = builder.build(&server).await?;
@@ -212,6 +214,8 @@ async fn user_shell_command_history_is_persisted_and_shared_with_model() -> anyh
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[cfg(not(target_os = "windows"))] // TODO: unignore on windows
 async fn user_shell_command_output_is_truncated_in_history() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
     let server = responses::start_mock_server().await;
     let builder = core_test_support::test_codex::test_codex();
     let test = builder
