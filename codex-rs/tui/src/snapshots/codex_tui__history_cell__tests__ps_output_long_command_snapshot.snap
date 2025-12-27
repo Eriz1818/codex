@@ -1,14 +1,14 @@
 ---
 source: tui/src/history_cell.rs
-assertion_line: 1915
+assertion_line: 1994
 expression: rendered
 ---
 /ps
 
-Background terminals
+Background terminals (1)
 
-  • rg "foo" src --glob '**/*. [...]
+  • proc-1 rg "foo" src --glob [...]
 
-Hooks
+Hooks (0)
 
   • No hooks running.

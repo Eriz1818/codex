@@ -33,6 +33,7 @@ pub enum SlashCommand {
     Feedback,
     Rollout,
     Ps,
+    PsKill,
     TestApproval,
 }
 
@@ -54,6 +55,7 @@ impl SlashCommand {
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Ps => "list background terminals",
+            SlashCommand::PsKill => "terminate background terminals",
             SlashCommand::Model => "choose what model and reasoning effort to use",
             SlashCommand::Approvals => "choose what Codex can do without approval",
             SlashCommand::Experimental => "toggle beta features",
@@ -89,6 +91,7 @@ impl SlashCommand {
             | SlashCommand::Skills
             | SlashCommand::Status
             | SlashCommand::Ps
+            | SlashCommand::PsKill
             | SlashCommand::Mcp
             | SlashCommand::Feedback
             | SlashCommand::Quit

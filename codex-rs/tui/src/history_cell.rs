@@ -516,14 +516,29 @@ pub(crate) fn new_unified_exec_wait_live(
     UnifiedExecWaitCell::new(command_display, animations_enabled)
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct BackgroundActivityEntry {
+    pub(crate) id: String,
+    pub(crate) command_display: String,
+}
+
+impl BackgroundActivityEntry {
+    pub(crate) fn new(id: String, command_display: String) -> Self {
+        Self {
+            id,
+            command_display,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct UnifiedExecSessionsCell {
-    sessions: Vec<String>,
-    hooks: Vec<String>,
+    sessions: Vec<BackgroundActivityEntry>,
+    hooks: Vec<BackgroundActivityEntry>,
 }
 
 impl UnifiedExecSessionsCell {
-    fn new(sessions: Vec<String>, hooks: Vec<String>) -> Self {
+    fn new(sessions: Vec<BackgroundActivityEntry>, hooks: Vec<BackgroundActivityEntry>) -> Self {
         Self { sessions, hooks }
     }
 }
@@ -537,7 +552,7 @@ impl HistoryCell for UnifiedExecSessionsCell {
         let wrap_width = width as usize;
         let max_entries = 16usize;
         let mut out: Vec<Line<'static>> = Vec::new();
-        out.push(vec!["Background terminals".bold()].into());
+        out.push(vec![format!("Background terminals ({})", self.sessions.len()).bold()].into());
         out.push("".into());
 
         if self.sessions.is_empty() {
@@ -549,14 +564,23 @@ impl HistoryCell for UnifiedExecSessionsCell {
         let truncation_suffix = " [...]";
         let truncation_suffix_width = UnicodeWidthStr::width(truncation_suffix);
         let mut shown = 0usize;
-        for command in &self.sessions {
+        for entry in &self.sessions {
             if shown >= max_entries {
                 break;
             }
+            let id_display = entry.id.as_str();
+            let id_width = UnicodeWidthStr::width(id_display);
+            if wrap_width <= prefix_width {
+                out.push(Line::from(prefix.dim()));
+                shown += 1;
+                continue;
+            }
+
             let (snippet, snippet_truncated) = {
-                let (first_line, has_more_lines) = match command.split_once('\n') {
+                let command_display = entry.command_display.as_str();
+                let (first_line, has_more_lines) = match command_display.split_once('\n') {
                     Some((first, _)) => (first, true),
-                    None => (command.as_str(), false),
+                    None => (command_display, false),
                 };
                 let max_graphemes = 80;
                 let mut graphemes = first_line.grapheme_indices(true);
@@ -566,26 +590,46 @@ impl HistoryCell for UnifiedExecSessionsCell {
                     (first_line.to_string(), has_more_lines)
                 }
             };
-            if wrap_width <= prefix_width {
-                out.push(Line::from(prefix.dim()));
+            let budget = wrap_width.saturating_sub(prefix_width);
+            if budget <= id_width.saturating_add(1) {
+                let (truncated, _, _) = take_prefix_by_width(id_display, budget);
+                out.push(vec![prefix.dim(), truncated.magenta()].into());
                 shown += 1;
                 continue;
             }
-            let budget = wrap_width.saturating_sub(prefix_width);
+
             let mut needs_suffix = snippet_truncated;
+            let snippet_budget = budget.saturating_sub(id_width.saturating_add(1));
             if !needs_suffix {
-                let (_, remainder, _) = take_prefix_by_width(&snippet, budget);
+                let (_, remainder, _) = take_prefix_by_width(&snippet, snippet_budget);
                 if !remainder.is_empty() {
                     needs_suffix = true;
                 }
             }
-            if needs_suffix && budget > truncation_suffix_width {
-                let available = budget.saturating_sub(truncation_suffix_width);
+            if needs_suffix && snippet_budget > truncation_suffix_width {
+                let available = snippet_budget.saturating_sub(truncation_suffix_width);
                 let (truncated, _, _) = take_prefix_by_width(&snippet, available);
-                out.push(vec![prefix.dim(), truncated.cyan(), truncation_suffix.dim()].into());
+                out.push(
+                    vec![
+                        prefix.dim(),
+                        id_display.to_string().magenta(),
+                        " ".dim(),
+                        truncated.cyan(),
+                        truncation_suffix.dim(),
+                    ]
+                    .into(),
+                );
             } else {
-                let (truncated, _, _) = take_prefix_by_width(&snippet, budget);
-                out.push(vec![prefix.dim(), truncated.cyan()].into());
+                let (truncated, _, _) = take_prefix_by_width(&snippet, snippet_budget);
+                out.push(
+                    vec![
+                        prefix.dim(),
+                        id_display.to_string().magenta(),
+                        " ".dim(),
+                        truncated.cyan(),
+                    ]
+                    .into(),
+                );
             }
             shown += 1;
         }
@@ -603,7 +647,7 @@ impl HistoryCell for UnifiedExecSessionsCell {
         }
 
         out.push("".into());
-        out.push(vec!["Hooks".bold()].into());
+        out.push(vec![format!("Hooks ({})", self.hooks.len()).bold()].into());
         out.push("".into());
 
         if self.hooks.is_empty() {
@@ -612,14 +656,23 @@ impl HistoryCell for UnifiedExecSessionsCell {
         }
 
         let mut shown = 0usize;
-        for command in &self.hooks {
+        for entry in &self.hooks {
             if shown >= max_entries {
                 break;
             }
+            let id_display = entry.id.as_str();
+            let id_width = UnicodeWidthStr::width(id_display);
+            if wrap_width <= prefix_width {
+                out.push(Line::from(prefix.dim()));
+                shown += 1;
+                continue;
+            }
+
             let (snippet, snippet_truncated) = {
-                let (first_line, has_more_lines) = match command.split_once('\n') {
+                let command_display = entry.command_display.as_str();
+                let (first_line, has_more_lines) = match command_display.split_once('\n') {
                     Some((first, _)) => (first, true),
-                    None => (command.as_str(), false),
+                    None => (command_display, false),
                 };
                 let max_graphemes = 80;
                 let mut graphemes = first_line.grapheme_indices(true);
@@ -629,26 +682,46 @@ impl HistoryCell for UnifiedExecSessionsCell {
                     (first_line.to_string(), has_more_lines)
                 }
             };
-            if wrap_width <= prefix_width {
-                out.push(Line::from(prefix.dim()));
+            let budget = wrap_width.saturating_sub(prefix_width);
+            if budget <= id_width.saturating_add(1) {
+                let (truncated, _, _) = take_prefix_by_width(id_display, budget);
+                out.push(vec![prefix.dim(), truncated.magenta()].into());
                 shown += 1;
                 continue;
             }
-            let budget = wrap_width.saturating_sub(prefix_width);
+
             let mut needs_suffix = snippet_truncated;
+            let snippet_budget = budget.saturating_sub(id_width.saturating_add(1));
             if !needs_suffix {
-                let (_, remainder, _) = take_prefix_by_width(&snippet, budget);
+                let (_, remainder, _) = take_prefix_by_width(&snippet, snippet_budget);
                 if !remainder.is_empty() {
                     needs_suffix = true;
                 }
             }
-            if needs_suffix && budget > truncation_suffix_width {
-                let available = budget.saturating_sub(truncation_suffix_width);
+            if needs_suffix && snippet_budget > truncation_suffix_width {
+                let available = snippet_budget.saturating_sub(truncation_suffix_width);
                 let (truncated, _, _) = take_prefix_by_width(&snippet, available);
-                out.push(vec![prefix.dim(), truncated.cyan(), truncation_suffix.dim()].into());
+                out.push(
+                    vec![
+                        prefix.dim(),
+                        id_display.to_string().magenta(),
+                        " ".dim(),
+                        truncated.cyan(),
+                        truncation_suffix.dim(),
+                    ]
+                    .into(),
+                );
             } else {
-                let (truncated, _, _) = take_prefix_by_width(&snippet, budget);
-                out.push(vec![prefix.dim(), truncated.cyan()].into());
+                let (truncated, _, _) = take_prefix_by_width(&snippet, snippet_budget);
+                out.push(
+                    vec![
+                        prefix.dim(),
+                        id_display.to_string().magenta(),
+                        " ".dim(),
+                        truncated.cyan(),
+                    ]
+                    .into(),
+                );
             }
             shown += 1;
         }
@@ -674,8 +747,8 @@ impl HistoryCell for UnifiedExecSessionsCell {
 }
 
 pub(crate) fn new_unified_exec_sessions_output(
-    sessions: Vec<String>,
-    hooks: Vec<String>,
+    sessions: Vec<BackgroundActivityEntry>,
+    hooks: Vec<BackgroundActivityEntry>,
 ) -> CompositeHistoryCell {
     let command = PlainHistoryCell::new(vec!["/ps".magenta().into()]);
     let summary = UnifiedExecSessionsCell::new(sessions, hooks);
@@ -1894,8 +1967,11 @@ mod tests {
     fn ps_output_multiline_snapshot() {
         let cell = new_unified_exec_sessions_output(
             vec![
-                "echo hello\nand then some extra text".to_string(),
-                "rg \"foo\" src".to_string(),
+                BackgroundActivityEntry::new(
+                    "proc-1".to_string(),
+                    "echo hello\nand then some extra text".to_string(),
+                ),
+                BackgroundActivityEntry::new("proc-2".to_string(), "rg \"foo\" src".to_string()),
             ],
             Vec::new(),
         );
@@ -1906,8 +1982,11 @@ mod tests {
     #[test]
     fn ps_output_long_command_snapshot() {
         let cell = new_unified_exec_sessions_output(
-            vec![String::from(
-                "rg \"foo\" src --glob '**/*.rs' --max-count 1000 --no-ignore --hidden --follow --glob '!target/**'",
+            vec![BackgroundActivityEntry::new(
+                "proc-1".to_string(),
+                String::from(
+                    "rg \"foo\" src --glob '**/*.rs' --max-count 1000 --no-ignore --hidden --follow --glob '!target/**'",
+                ),
             )],
             Vec::new(),
         );
@@ -1918,10 +1997,33 @@ mod tests {
     #[test]
     fn ps_output_many_sessions_snapshot() {
         let cell = new_unified_exec_sessions_output(
-            (0..20).map(|idx| format!("command {idx}")).collect(),
+            (0..20)
+                .map(|idx| {
+                    BackgroundActivityEntry::new(format!("proc-{idx}"), format!("command {idx}"))
+                })
+                .collect(),
             Vec::new(),
         );
         let rendered = render_lines(&cell.display_lines(32)).join("\n");
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn ps_output_hooks_snapshot() {
+        let cell = new_unified_exec_sessions_output(
+            Vec::new(),
+            vec![
+                BackgroundActivityEntry::new(
+                    "hook-1".to_string(),
+                    "agent-turn-complete · hook.sh".to_string(),
+                ),
+                BackgroundActivityEntry::new(
+                    "hook-2".to_string(),
+                    "pre-commit · just fmt".to_string(),
+                ),
+            ],
+        );
+        let rendered = render_lines(&cell.display_lines(60)).join("\n");
         insta::assert_snapshot!(rendered);
     }
 

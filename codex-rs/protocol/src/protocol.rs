@@ -71,6 +71,14 @@ pub enum Op {
     /// This server sends [`EventMsg::TurnAborted`] in response.
     Interrupt,
 
+    /// Terminate a running background unified-exec session by its `process_id`.
+    ///
+    /// The `process_id` is the stable identifier shown by `/ps` in the TUI.
+    TerminateUnifiedExecSession { process_id: String },
+
+    /// Terminate all running background unified-exec sessions.
+    TerminateAllUnifiedExecSessions,
+
     /// Input from the user
     UserInput {
         /// User input items, see `InputItem`

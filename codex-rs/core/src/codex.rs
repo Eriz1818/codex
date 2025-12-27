@@ -1652,6 +1652,12 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
             Op::Interrupt => {
                 handlers::interrupt(&sess).await;
             }
+            Op::TerminateUnifiedExecSession { process_id } => {
+                handlers::terminate_unified_exec_session(&sess, sub.id.clone(), process_id).await;
+            }
+            Op::TerminateAllUnifiedExecSessions => {
+                handlers::terminate_all_unified_exec_sessions(&sess, sub.id.clone()).await;
+            }
             Op::OverrideTurnContext {
                 cwd,
                 approval_policy,
@@ -1757,6 +1763,7 @@ mod handlers {
     use crate::tasks::UndoTask;
     use crate::tasks::UserShellCommandTask;
     use codex_protocol::custom_prompts::CustomPrompt;
+    use codex_protocol::protocol::BackgroundEventEvent;
     use codex_protocol::protocol::CodexErrorInfo;
     use codex_protocol::protocol::ErrorEvent;
     use codex_protocol::protocol::Event;
@@ -1781,6 +1788,44 @@ mod handlers {
 
     pub async fn interrupt(sess: &Arc<Session>) {
         sess.interrupt_task().await;
+    }
+
+    pub async fn terminate_unified_exec_session(
+        sess: &Arc<Session>,
+        sub_id: String,
+        process_id: String,
+    ) {
+        let terminated = sess
+            .services
+            .unified_exec_manager
+            .terminate_session(&process_id)
+            .await;
+
+        let message = if terminated {
+            format!("Terminated background terminal {process_id}.")
+        } else {
+            format!("No background terminal {process_id} is running.")
+        };
+
+        sess.send_event_raw(Event {
+            id: sub_id,
+            msg: EventMsg::BackgroundEvent(BackgroundEventEvent { message }),
+        })
+        .await;
+    }
+
+    pub async fn terminate_all_unified_exec_sessions(sess: &Arc<Session>, sub_id: String) {
+        sess.services
+            .unified_exec_manager
+            .terminate_all_sessions()
+            .await;
+        sess.send_event_raw(Event {
+            id: sub_id,
+            msg: EventMsg::BackgroundEvent(BackgroundEventEvent {
+                message: "Terminated all background terminals.".to_string(),
+            }),
+        })
+        .await;
     }
 
     pub async fn override_turn_context(

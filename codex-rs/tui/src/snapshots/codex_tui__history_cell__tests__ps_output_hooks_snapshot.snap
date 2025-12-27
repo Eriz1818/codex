@@ -1,6 +1,6 @@
 ---
 source: tui/src/history_cell.rs
-assertion_line: 1963
+assertion_line: 2027
 expression: rendered
 ---
 /ps
@@ -9,6 +9,7 @@ Background terminals (0)
 
   • No background terminals running.
 
-Hooks (0)
+Hooks (2)
 
-  • No hooks running.
+  • hook-1 agent-turn-complete · hook.sh
+  • hook-2 pre-commit · just fmt

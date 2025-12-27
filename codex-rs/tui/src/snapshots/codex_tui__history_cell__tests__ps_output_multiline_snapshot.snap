@@ -1,15 +1,15 @@
 ---
 source: tui/src/history_cell.rs
-assertion_line: 1903
+assertion_line: 1979
 expression: rendered
 ---
 /ps
 
-Background terminals
+Background terminals (2)
 
-  • echo hello [...]
-  • rg "foo" src
+  • proc-1 echo hello [...]
+  • proc-2 rg "foo" src
 
-Hooks
+Hooks (0)
 
   • No hooks running.

@@ -8,6 +8,7 @@
 
 - Keep context under control with `/compact` and `/autocompact` (see [`docs/xcodex/compact.md`](docs/xcodex/compact.md)).
 - Automate Codex with hooks (turn-complete + approval-requested; see [`docs/xcodex/hooks.md`](docs/xcodex/hooks.md)).
+- Manage background terminals with `/ps` (list) and `/ps-kill` (terminate) (see [`docs/xcodex/background-terminals.md`](docs/xcodex/background-terminals.md)).
 - More features are in progress; expect rough edges and some churn.
 
 ## Quickstart

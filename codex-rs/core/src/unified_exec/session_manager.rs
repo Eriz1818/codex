@@ -111,6 +111,20 @@ impl UnifiedExecSessionManager {
         store.remove(process_id);
     }
 
+    pub(crate) async fn terminate_session(&self, process_id: &str) -> bool {
+        let entry = {
+            let mut store = self.session_store.lock().await;
+            store.remove(process_id)
+        };
+
+        if let Some(entry) = entry {
+            entry.session.terminate();
+            return true;
+        }
+
+        false
+    }
+
     pub(crate) async fn exec_command(
         &self,
         request: ExecCommandRequest,

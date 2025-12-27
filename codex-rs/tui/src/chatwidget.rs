@@ -1845,6 +1845,9 @@ impl ChatWidget {
             SlashCommand::Ps => {
                 self.add_ps_output();
             }
+            SlashCommand::PsKill => {
+                self.open_kill_popup();
+            }
             SlashCommand::Mcp => {
                 self.add_mcp_output();
             }
@@ -2378,16 +2381,93 @@ impl ChatWidget {
         let sessions = self
             .unified_exec_sessions
             .iter()
-            .map(|session| session.command_display.clone())
+            .map(|session| {
+                history_cell::BackgroundActivityEntry::new(
+                    session.key.clone(),
+                    session.command_display.clone(),
+                )
+            })
             .collect();
         let hooks = self
             .hook_processes
             .iter()
-            .map(|hook| hook.command_display.clone())
+            .map(|hook| {
+                history_cell::BackgroundActivityEntry::new(
+                    hook.key.clone(),
+                    hook.command_display.clone(),
+                )
+            })
             .collect();
         self.add_to_history(history_cell::new_unified_exec_sessions_output(
             sessions, hooks,
         ));
+    }
+
+    fn open_kill_popup(&mut self) {
+        if self.unified_exec_sessions.is_empty() {
+            self.add_info_message("No background terminals running.".to_string(), None);
+            return;
+        }
+
+        let mut items: Vec<SelectionItem> = Vec::new();
+
+        let all_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
+            tx.send(AppEvent::CodexOp(Op::TerminateAllUnifiedExecSessions));
+            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                history_cell::new_info_event(
+                    "Terminating all background terminals…".to_string(),
+                    None,
+                ),
+            )));
+        })];
+        items.push(SelectionItem {
+            name: "Terminate all background terminals".to_string(),
+            description: Some("Closes every running background terminal session.".to_string()),
+            selected_description: None,
+            is_current: false,
+            actions: all_actions,
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        for session in &self.unified_exec_sessions {
+            let process_id = session.key.clone();
+            let process_id_for_action = process_id.clone();
+            let command_display = session.command_display.clone();
+            let search_value = format!("{process_id} {command_display}");
+            let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+                tx.send(AppEvent::CodexOp(Op::TerminateUnifiedExecSession {
+                    process_id: process_id_for_action.clone(),
+                }));
+                tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    history_cell::new_info_event(
+                        format!("Terminating background terminal {process_id_for_action}…"),
+                        None,
+                    ),
+                )));
+            })];
+            items.push(SelectionItem {
+                name: process_id,
+                description: Some(command_display),
+                selected_description: None,
+                is_current: false,
+                actions,
+                dismiss_on_select: true,
+                search_value: Some(search_value),
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Terminate background terminals".to_string()),
+            subtitle: Some("Select a unified-exec session id (shown by /ps).".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            is_searchable: true,
+            search_placeholder: Some("Search by id or command".to_string()),
+            ..Default::default()
+        });
+        self.request_redraw();
     }
 
     fn stop_rate_limit_poller(&mut self) {
