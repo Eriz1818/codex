@@ -198,8 +198,8 @@ async fn review_restores_context_window_indicator() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(None).await;
 
     let context_window = 13_000;
-    let pre_review_tokens = 12_700; // ~30% remaining after subtracting baseline.
-    let review_tokens = 12_030; // ~97% remaining after subtracting baseline.
+    let pre_review_tokens = 9_100; // ~30% remaining.
+    let review_tokens = 390; // ~97% remaining.
 
     chat.handle_codex_event(Event {
         id: "token-before".into(),
@@ -247,7 +247,7 @@ async fn token_count_none_resets_context_indicator() {
     let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     let context_window = 13_000;
-    let pre_compact_tokens = 12_700;
+    let pre_compact_tokens = 9_100;
 
     chat.handle_codex_event(Event {
         id: "token-before".into(),
