@@ -1,4 +1,4 @@
-#xcodex (xtreme-codex) is an effort to add features to upstream Codex CLI
+# xcodex (xtreme-codex) is an effort to add features to upstream Codex CLI
 ---
 
 ## Highlights
