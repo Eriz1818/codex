@@ -245,7 +245,9 @@ pub async fn process_sse(
                         && let Ok(error) = serde_json::from_value::<Error>(error.clone())
                     {
                         if is_context_window_error(&error) {
-                            response_error = Some(ApiError::ContextWindowExceeded);
+                            response_error = Some(ApiError::ContextWindowExceeded {
+                                message: Some(format_error_details(&error)),
+                            });
                         } else if is_quota_exceeded_error(&error) {
                             response_error = Some(ApiError::QuotaExceeded);
                         } else if is_usage_not_included(&error) {
@@ -326,6 +328,20 @@ fn try_parse_retry_after(err: &Error) -> Option<Duration> {
 
 fn is_context_window_error(error: &Error) -> bool {
     error.code.as_deref() == Some("context_length_exceeded")
+}
+
+fn single_line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn format_error_details(error: &Error) -> String {
+    let message = error.message.as_deref().map(single_line);
+    match (error.code.as_deref(), message.as_deref()) {
+        (Some(code), Some(message)) => format!("{code}: {message}"),
+        (Some(code), None) => code.to_string(),
+        (None, Some(message)) => message.to_string(),
+        (None, None) => "context_length_exceeded".to_string(),
+    }
 }
 
 fn is_quota_exceeded_error(error: &Error) -> bool {
@@ -523,7 +539,10 @@ mod tests {
 
         assert_eq!(events.len(), 1);
 
-        assert_matches!(events[0], Err(ApiError::ContextWindowExceeded));
+        assert_matches!(
+            events[0],
+            Err(ApiError::ContextWindowExceeded { message: Some(_) })
+        );
     }
 
     #[tokio::test]
@@ -536,7 +555,10 @@ mod tests {
 
         assert_eq!(events.len(), 1);
 
-        assert_matches!(events[0], Err(ApiError::ContextWindowExceeded));
+        assert_matches!(
+            events[0],
+            Err(ApiError::ContextWindowExceeded { message: Some(_) })
+        );
     }
 
     #[tokio::test]

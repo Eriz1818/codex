@@ -71,9 +71,14 @@ pub enum CodexErr {
     Stream(String, Option<Duration>),
 
     #[error(
-        "Codex ran out of room in the model's context window. Try `/compact` to summarize history or enable `/autocompact` to do it automatically. Otherwise start a new conversation or clear earlier history before retrying."
+        "Codex estimates the next request will exceed the model's context window. Try `/compact` to summarize history or enable `/autocompact` to do it automatically. Otherwise start a new conversation or clear earlier history before retrying."
     )]
     ContextWindowExceeded,
+
+    #[error(
+        "The provider rejected this request because it exceeded the model's context window: {0}. Try `/compact` to summarize history or enable `/autocompact` to do it automatically."
+    )]
+    ProviderContextWindowExceeded(String),
 
     #[error("no conversation with id: {0}")]
     ConversationNotFound(ConversationId),
@@ -438,7 +443,9 @@ impl CodexErr {
     /// Translate core error to client-facing protocol error.
     pub fn to_codex_protocol_error(&self) -> CodexErrorInfo {
         match self {
-            CodexErr::ContextWindowExceeded => CodexErrorInfo::ContextWindowExceeded,
+            CodexErr::ContextWindowExceeded | CodexErr::ProviderContextWindowExceeded(_) => {
+                CodexErrorInfo::ContextWindowExceeded
+            }
             CodexErr::UsageLimitReached(_)
             | CodexErr::QuotaExceeded
             | CodexErr::UsageNotIncluded => CodexErrorInfo::UsageLimitExceeded,
@@ -631,6 +638,28 @@ mod tests {
             output: Box::new(output),
         });
         assert_eq!(get_error_message_ui(&err), "stdout only");
+    }
+
+    #[test]
+    fn context_window_errors_distinguish_local_estimate_vs_provider_rejection() {
+        let local = CodexErr::ContextWindowExceeded.to_string();
+        assert!(
+            local.contains("estimates"),
+            "expected local context window error message to mention estimate; got: {local}"
+        );
+
+        let provider = CodexErr::ProviderContextWindowExceeded(
+            "context_length_exceeded: too many tokens".to_string(),
+        )
+        .to_string();
+        assert!(
+            provider.contains("provider rejected"),
+            "expected provider context window error message to mention provider rejection; got: {provider}"
+        );
+        assert!(
+            provider.contains("context_length_exceeded"),
+            "expected provider context window error message to preserve details; got: {provider}"
+        );
     }
 
     #[test]

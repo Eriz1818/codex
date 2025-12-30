@@ -14,7 +14,9 @@ pub(crate) struct SessionState {
     pub(crate) session_configuration: SessionConfiguration,
     pub(crate) history: ContextManager,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
+    pub(crate) latest_api_token_usage: Option<TokenUsage>,
     pub(crate) auto_compact_enabled: bool,
+    pub(crate) low_context_warning_state: LowContextWarningState,
 }
 
 impl SessionState {
@@ -25,7 +27,9 @@ impl SessionState {
             session_configuration,
             history,
             latest_rate_limits: None,
+            latest_api_token_usage: None,
             auto_compact_enabled: false,
+            low_context_warning_state: LowContextWarningState::default(),
         }
     }
 
@@ -56,6 +60,7 @@ impl SessionState {
         usage: &TokenUsage,
         model_context_window: Option<i64>,
     ) {
+        self.latest_api_token_usage = Some(usage.clone());
         self.history.update_token_info(usage, model_context_window);
     }
 
@@ -77,11 +82,11 @@ impl SessionState {
     }
 
     pub(crate) fn set_token_usage_full(&mut self, context_window: i64) {
+        self.latest_api_token_usage = Some(TokenUsage {
+            total_tokens: context_window,
+            ..TokenUsage::default()
+        });
         self.history.set_token_usage_full(context_window);
-    }
-
-    pub(crate) fn get_total_token_usage(&self) -> i64 {
-        self.history.get_total_token_usage()
     }
 
     pub(crate) fn auto_compact_enabled(&self) -> bool {
@@ -90,6 +95,20 @@ impl SessionState {
 
     pub(crate) fn set_auto_compact_enabled(&mut self, enabled: bool) {
         self.auto_compact_enabled = enabled;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct LowContextWarningState {
+    pub(crate) warned_autocompact_threshold: bool,
+    pub(crate) warned_manual_compact: bool,
+}
+
+impl LowContextWarningState {
+    pub(crate) fn reset_if_recovered(&mut self, percent_remaining: i64) {
+        if percent_remaining > 20 {
+            *self = Self::default();
+        }
     }
 }
 

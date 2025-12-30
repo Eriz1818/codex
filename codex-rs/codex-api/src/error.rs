@@ -13,7 +13,7 @@ pub enum ApiError {
     #[error("stream error: {0}")]
     Stream(String),
     #[error("context window exceeded")]
-    ContextWindowExceeded,
+    ContextWindowExceeded { message: Option<String> },
     #[error("quota exceeded")]
     QuotaExceeded,
     #[error("usage not included")]

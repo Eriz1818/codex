@@ -138,9 +138,12 @@ impl StatusHistoryCell {
         let agents_summary = compose_agents_summary(config);
         let account = compose_account_display(auth_manager, plan_type);
         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
+        let effective_context_window_percent =
+            model_family.effective_context_window_percent.clamp(1, 100);
         let context_window = model_family.context_window.and_then(|window| {
+            let effective_window = window.saturating_mul(effective_context_window_percent) / 100;
             context_usage.map(|usage| StatusContextWindowData {
-                percent_remaining: usage.percent_of_context_window_remaining(window),
+                percent_remaining: usage.percent_of_context_window_remaining(effective_window),
                 tokens_in_context: usage.tokens_in_context_window(),
                 window,
             })

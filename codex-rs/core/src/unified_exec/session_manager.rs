@@ -1,9 +1,9 @@
-use rand::Rng;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
@@ -16,8 +16,13 @@ use crate::codex::TurnContext;
 use crate::exec_env::create_env;
 use crate::protocol::BackgroundEventEvent;
 use crate::protocol::EventMsg;
+use crate::protocol::ExecCommandSource;
 use crate::sandboxing::ExecEnv;
 use crate::sandboxing::SandboxPermissions;
+use crate::tools::events::ToolEmitter;
+use crate::tools::events::ToolEventCtx;
+use crate::tools::events::ToolEventFailure;
+use crate::tools::events::ToolEventStage;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::runtimes::unified_exec::UnifiedExecRequest as UnifiedExecToolRequest;
 use crate::tools::runtimes::unified_exec::UnifiedExecRuntime;
@@ -78,32 +83,9 @@ struct PreparedSessionHandles {
 
 impl UnifiedExecSessionManager {
     pub(crate) async fn allocate_process_id(&self) -> String {
-        loop {
-            let mut store = self.session_store.lock().await;
-
-            let process_id = if !cfg!(test) && !cfg!(feature = "deterministic_process_ids") {
-                // production mode → random
-                rand::rng().random_range(1_000..100_000).to_string()
-            } else {
-                // test or deterministic mode
-                let next = store
-                    .reserved_sessions_id
-                    .iter()
-                    .filter_map(|s| s.parse::<i32>().ok())
-                    .max()
-                    .map(|m| std::cmp::max(m, 999) + 1)
-                    .unwrap_or(1000);
-
-                next.to_string()
-            };
-
-            if store.reserved_sessions_id.contains(&process_id) {
-                continue;
-            }
-
-            store.reserved_sessions_id.insert(process_id.clone());
-            return process_id;
-        }
+        self.next_process_id
+            .fetch_add(1, Ordering::Relaxed)
+            .to_string()
     }
 
     pub(crate) async fn release_process_id(&self, process_id: &str) {
@@ -148,6 +130,26 @@ impl UnifiedExecSessionManager {
         let session = match session {
             Ok(session) => Arc::new(session),
             Err(err) => {
+                let event_ctx = ToolEventCtx::new(
+                    context.session.as_ref(),
+                    context.turn.as_ref(),
+                    &context.call_id,
+                    None,
+                );
+                let emitter = ToolEmitter::unified_exec(
+                    &request.command,
+                    cwd.clone(),
+                    ExecCommandSource::UnifiedExecStartup,
+                    Some(request.process_id.clone()),
+                );
+                // Ensure every ExecCommandBegin has a corresponding ExecCommandEnd so
+                // clients don't retain "phantom" sessions in `/ps` output.
+                emitter
+                    .emit(
+                        event_ctx,
+                        ToolEventStage::Failure(ToolEventFailure::Message(err.to_string())),
+                    )
+                    .await;
                 self.release_process_id(&request.process_id).await;
                 return Err(err);
             }
@@ -648,10 +650,9 @@ impl UnifiedExecSessionManager {
 
     pub(crate) async fn terminate_all_sessions(&self) {
         let entries: Vec<SessionEntry> = {
-            let mut sessions = self.session_store.lock().await;
+            let mut store = self.session_store.lock().await;
             let entries: Vec<SessionEntry> =
-                sessions.sessions.drain().map(|(_, entry)| entry).collect();
-            sessions.reserved_sessions_id.clear();
+                store.sessions.drain().map(|(_, entry)| entry).collect();
             entries
         };
 
@@ -680,6 +681,17 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tokio::time::Duration;
     use tokio::time::Instant;
+
+    #[tokio::test]
+    async fn process_id_allocation_is_monotonic_in_tests() {
+        let manager = UnifiedExecSessionManager::default();
+
+        let first = manager.allocate_process_id().await;
+        let second = manager.allocate_process_id().await;
+
+        assert_eq!(first, "1000");
+        assert_eq!(second, "1001");
+    }
 
     #[test]
     fn unified_exec_env_injects_defaults() {

@@ -2112,7 +2112,7 @@ async fn auto_compact_counts_encrypted_reasoning_before_last_user() {
         if idx < 2 {
             assert!(
                 compact_mock.requests().is_empty(),
-                "remote compaction should not run before the next user turn"
+                "remote compaction should not run before the next user turn (idx={idx})"
             );
         }
     }

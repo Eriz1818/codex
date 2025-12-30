@@ -22,6 +22,7 @@ use crate::protocol::Event;
 use crate::protocol::EventMsg;
 use crate::protocol::HookProcessBeginEvent;
 use crate::protocol::HookProcessEndEvent;
+use crate::protocol::TokenUsage;
 
 const MAX_CONCURRENT_HOOKS: usize = 8;
 
@@ -152,6 +153,148 @@ impl UserHooks {
         );
     }
 
+    pub(crate) fn session_start(&self, thread_id: String, cwd: String, session_source: String) {
+        self.invoke_hook_commands(
+            &self.hooks.session_start,
+            HookNotification::SessionStart {
+                thread_id,
+                cwd,
+                session_source,
+            },
+        );
+    }
+
+    pub(crate) fn session_end(&self, thread_id: String, cwd: String, session_source: String) {
+        self.invoke_hook_commands_detached(
+            &self.hooks.session_end,
+            HookNotification::SessionEnd {
+                thread_id,
+                cwd,
+                session_source,
+            },
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn model_request_started(
+        &self,
+        thread_id: String,
+        turn_id: String,
+        cwd: String,
+        model_request_id: Uuid,
+        attempt: u32,
+        model: String,
+        provider: String,
+        input_item_count: usize,
+        tool_count: usize,
+        parallel_tool_calls: bool,
+        has_output_schema: bool,
+    ) {
+        self.invoke_hook_commands(
+            &self.hooks.model_request_started,
+            HookNotification::ModelRequestStarted {
+                thread_id,
+                turn_id,
+                cwd,
+                model_request_id,
+                attempt,
+                model,
+                provider,
+                input_item_count,
+                tool_count,
+                parallel_tool_calls,
+                has_output_schema,
+            },
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn model_response_completed(
+        &self,
+        thread_id: String,
+        turn_id: String,
+        cwd: String,
+        model_request_id: Uuid,
+        attempt: u32,
+        response_id: String,
+        token_usage: Option<TokenUsage>,
+        needs_follow_up: bool,
+    ) {
+        self.invoke_hook_commands(
+            &self.hooks.model_response_completed,
+            HookNotification::ModelResponseCompleted {
+                thread_id,
+                turn_id,
+                cwd,
+                model_request_id,
+                attempt,
+                response_id,
+                token_usage,
+                needs_follow_up,
+            },
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn tool_call_started(
+        &self,
+        thread_id: String,
+        turn_id: String,
+        cwd: String,
+        model_request_id: Uuid,
+        attempt: u32,
+        tool_name: String,
+        call_id: String,
+    ) {
+        self.invoke_hook_commands(
+            &self.hooks.tool_call_started,
+            HookNotification::ToolCallStarted {
+                thread_id,
+                turn_id,
+                cwd,
+                model_request_id,
+                attempt,
+                tool_name,
+                call_id,
+            },
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn tool_call_finished(
+        &self,
+        thread_id: String,
+        turn_id: String,
+        cwd: String,
+        model_request_id: Uuid,
+        attempt: u32,
+        tool_name: String,
+        call_id: String,
+        status: ToolCallStatus,
+        duration_ms: u64,
+        success: bool,
+        output_bytes: usize,
+        output_preview: Option<String>,
+    ) {
+        self.invoke_hook_commands(
+            &self.hooks.tool_call_finished,
+            HookNotification::ToolCallFinished {
+                thread_id,
+                turn_id,
+                cwd,
+                model_request_id,
+                attempt,
+                tool_name,
+                call_id,
+                status,
+                duration_ms,
+                success,
+                output_bytes,
+                output_preview,
+            },
+        );
+    }
+
     fn invoke_hook_commands(&self, commands: &[Vec<String>], notification: HookNotification) {
         if commands.is_empty() {
             return;
@@ -163,73 +306,107 @@ impl UserHooks {
             return;
         };
 
-        let max_stdin_payload_bytes = self.hooks.max_stdin_payload_bytes;
-        let keep_last_n_payloads = self.hooks.keep_last_n_payloads;
-        let codex_home = self.codex_home.clone();
-        let tx_event = self.tx_event.clone();
-        let semaphore = self.semaphore.clone();
+        let commands: Vec<Vec<String>> = commands
+            .iter()
+            .cloned()
+            .filter(|command| !command.is_empty())
+            .collect();
+        if commands.is_empty() {
+            return;
+        }
 
-        for command in commands.to_vec() {
+        let ctx = HookCommandContext {
+            max_stdin_payload_bytes: self.hooks.max_stdin_payload_bytes,
+            keep_last_n_payloads: self.hooks.keep_last_n_payloads,
+            codex_home: self.codex_home.clone(),
+            tx_event: self.tx_event.clone(),
+            semaphore: self.semaphore.clone(),
+        };
+
+        tokio::spawn(async move {
+            let stdin_payload = prepare_hook_stdin_payload(
+                &payload,
+                &payload_json,
+                ctx.max_stdin_payload_bytes,
+                ctx.keep_last_n_payloads,
+                &ctx.codex_home,
+            );
+
+            for command in commands {
+                let ctx = ctx.clone();
+                let payload = payload.clone();
+                let stdin_payload = stdin_payload.clone();
+                tokio::spawn(async move {
+                    run_hook_command(command, payload, stdin_payload, ctx).await;
+                });
+            }
+        });
+    }
+
+    fn invoke_hook_commands_detached(
+        &self,
+        commands: &[Vec<String>],
+        notification: HookNotification,
+    ) {
+        if commands.is_empty() {
+            return;
+        }
+
+        let payload = HookPayload::new(notification);
+        let Ok(payload_json) = serde_json::to_vec(&payload) else {
+            error!("failed to serialise hook payload");
+            return;
+        };
+
+        let stdin_payload = prepare_hook_stdin_payload(
+            &payload,
+            &payload_json,
+            self.hooks.max_stdin_payload_bytes,
+            self.hooks.keep_last_n_payloads,
+            &self.codex_home,
+        );
+
+        for command in commands.iter().cloned() {
             if command.is_empty() {
                 continue;
             }
 
-            let payload = payload.clone();
-            let payload_json = payload_json.clone();
-            let codex_home = codex_home.clone();
-            let tx_event = tx_event.clone();
-            let semaphore = semaphore.clone();
-            tokio::spawn(async move {
-                run_hook_command(
-                    command,
-                    payload,
-                    payload_json,
-                    max_stdin_payload_bytes,
-                    keep_last_n_payloads,
-                    codex_home,
-                    tx_event,
-                    semaphore,
-                )
-                .await;
-            });
+            spawn_hook_command_detached(
+                command,
+                self.hooks.keep_last_n_payloads,
+                &self.codex_home,
+                &stdin_payload,
+            );
         }
     }
 }
 
-async fn run_hook_command(
-    command: Vec<String>,
-    payload: HookPayload,
-    payload_json: Vec<u8>,
+#[derive(Clone)]
+struct HookCommandContext {
     max_stdin_payload_bytes: usize,
     keep_last_n_payloads: usize,
     codex_home: PathBuf,
     tx_event: Option<Sender<Event>>,
     semaphore: std::sync::Arc<Semaphore>,
+}
+
+async fn run_hook_command(
+    command: Vec<String>,
+    payload: HookPayload,
+    stdin_payload: Vec<u8>,
+    ctx: HookCommandContext,
 ) {
+    let HookCommandContext {
+        keep_last_n_payloads,
+        codex_home,
+        tx_event,
+        semaphore,
+        ..
+    } = ctx;
+
     let _permit = semaphore.acquire().await;
     let hook_id = Uuid::new_v4();
     let event_type = payload.event_type().to_string();
-
-    let (stdin_payload, payload_path) = if payload_json.len() <= max_stdin_payload_bytes {
-        (payload_json, None)
-    } else {
-        match write_payload_file(&codex_home, &payload, &payload_json, keep_last_n_payloads) {
-            Ok(path) => {
-                let envelope = HookStdinEnvelope::from_payload(&payload, path.clone());
-                match serde_json::to_vec(&envelope) {
-                    Ok(envelope_json) => (envelope_json, Some(path)),
-                    Err(e) => {
-                        warn!("failed to serialise hook stdin envelope: {e}");
-                        (payload_json, None)
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("failed to write hook payload file: {e}");
-                (payload_json, None)
-            }
-        }
-    };
 
     let (stdout, stderr) = open_hook_log_files(&codex_home, hook_id, keep_last_n_payloads);
 
@@ -295,8 +472,42 @@ async fn run_hook_command(
             })
             .await;
     }
+}
 
-    drop(payload_path);
+fn spawn_hook_command_detached(
+    command: Vec<String>,
+    keep_last_n_payloads: usize,
+    codex_home: &Path,
+    stdin_payload: &[u8],
+) {
+    let (stdout, stderr) = open_hook_log_files(codex_home, Uuid::new_v4(), keep_last_n_payloads);
+
+    let child = {
+        let mut cmd = std::process::Command::new(&command[0]);
+        if command.len() > 1 {
+            cmd.args(&command[1..]);
+        }
+        cmd.stdin(Stdio::piped());
+        cmd.stdout(stdout);
+        cmd.stderr(stderr);
+        cmd.spawn()
+    };
+
+    let mut child = match child {
+        Ok(child) => child,
+        Err(e) => {
+            #[allow(clippy::indexing_slicing)]
+            let program = &command[0];
+            warn!("failed to spawn hook '{program}': {e}");
+            return;
+        }
+    };
+
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(e) = stdin.write_all(stdin_payload)
+    {
+        warn!("failed to write hook payload to stdin: {e}");
+    }
 }
 
 fn open_hook_log_files(codex_home: &Path, hook_id: Uuid, keep_last_n: usize) -> (Stdio, Stdio) {
@@ -341,6 +552,36 @@ fn open_hook_log_files(codex_home: &Path, hook_id: Uuid, keep_last_n: usize) -> 
     };
 
     (Stdio::from(file), Stdio::from(stderr))
+}
+
+fn prepare_hook_stdin_payload(
+    payload: &HookPayload,
+    payload_json: &[u8],
+    max_stdin_payload_bytes: usize,
+    keep_last_n_payloads: usize,
+    codex_home: &Path,
+) -> Vec<u8> {
+    if payload_json.len() <= max_stdin_payload_bytes {
+        return payload_json.to_vec();
+    }
+
+    let payload_path =
+        match write_payload_file(codex_home, payload, payload_json, keep_last_n_payloads) {
+            Ok(path) => path,
+            Err(e) => {
+                warn!("failed to write hook payload file: {e}");
+                return payload_json.to_vec();
+            }
+        };
+
+    let envelope = HookStdinEnvelope::from_payload(payload, payload_path);
+    match serde_json::to_vec(&envelope) {
+        Ok(envelope_json) => envelope_json,
+        Err(e) => {
+            warn!("failed to serialise hook stdin envelope: {e}");
+            payload_json.to_vec()
+        }
+    }
 }
 
 fn write_payload_file(
@@ -478,6 +719,13 @@ enum ApprovalKind {
     Elicitation,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ToolCallStatus {
+    Completed,
+    Aborted,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 enum HookNotification {
@@ -520,6 +768,77 @@ enum HookNotification {
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
+
+    #[serde(rename_all = "kebab-case")]
+    SessionStart {
+        thread_id: String,
+        cwd: String,
+        session_source: String,
+    },
+
+    #[serde(rename_all = "kebab-case")]
+    SessionEnd {
+        thread_id: String,
+        cwd: String,
+        session_source: String,
+    },
+
+    #[serde(rename_all = "kebab-case")]
+    ModelRequestStarted {
+        thread_id: String,
+        turn_id: String,
+        cwd: String,
+        model_request_id: Uuid,
+        attempt: u32,
+        model: String,
+        provider: String,
+        #[serde(rename = "prompt-input-item-count")]
+        input_item_count: usize,
+        tool_count: usize,
+        parallel_tool_calls: bool,
+        has_output_schema: bool,
+    },
+
+    #[serde(rename_all = "kebab-case")]
+    ModelResponseCompleted {
+        thread_id: String,
+        turn_id: String,
+        cwd: String,
+        model_request_id: Uuid,
+        attempt: u32,
+        response_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        token_usage: Option<TokenUsage>,
+        needs_follow_up: bool,
+    },
+
+    #[serde(rename_all = "kebab-case")]
+    ToolCallStarted {
+        thread_id: String,
+        turn_id: String,
+        cwd: String,
+        model_request_id: Uuid,
+        attempt: u32,
+        tool_name: String,
+        call_id: String,
+    },
+
+    #[serde(rename_all = "kebab-case")]
+    ToolCallFinished {
+        thread_id: String,
+        turn_id: String,
+        cwd: String,
+        model_request_id: Uuid,
+        attempt: u32,
+        tool_name: String,
+        call_id: String,
+        status: ToolCallStatus,
+        duration_ms: u64,
+        success: bool,
+        output_bytes: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output_preview: Option<String>,
+    },
 }
 
 impl HookNotification {
@@ -527,6 +846,12 @@ impl HookNotification {
         match self {
             Self::AgentTurnComplete { .. } => "agent-turn-complete",
             Self::ApprovalRequested { .. } => "approval-requested",
+            Self::SessionStart { .. } => "session-start",
+            Self::SessionEnd { .. } => "session-end",
+            Self::ModelRequestStarted { .. } => "model-request-started",
+            Self::ModelResponseCompleted { .. } => "model-response-completed",
+            Self::ToolCallStarted { .. } => "tool-call-started",
+            Self::ToolCallFinished { .. } => "tool-call-finished",
         }
     }
 }

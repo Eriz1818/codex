@@ -127,7 +127,7 @@ fn filters_non_api_messages() {
 fn non_last_reasoning_tokens_return_zero_when_no_user_messages() {
     let history = create_history_with_items(vec![reasoning_with_encrypted_content(800)]);
 
-    assert_eq!(history.get_non_last_reasoning_items_tokens(), 0);
+    assert_eq!(history.non_last_encrypted_reasoning_tokens(), 0);
 }
 
 #[test]
@@ -139,10 +139,10 @@ fn non_last_reasoning_tokens_ignore_entries_after_last_user() {
         user_msg("second"),
         reasoning_with_encrypted_content(2_000),
     ]);
-    // first: (900 * 0.75 - 650) / 4 = 6.25 tokens
-    // second: (1000 * 0.75 - 650) / 4 = 25 tokens
-    // first + second = 62.5
-    assert_eq!(history.get_non_last_reasoning_items_tokens(), 32);
+    // first: estimate_reasoning_length(900) = 25 bytes → 7 tokens (approx byte heuristic)
+    // second: estimate_reasoning_length(1_000) = 100 bytes → 25 tokens (approx byte heuristic)
+    // first + second = 32
+    assert_eq!(history.non_last_encrypted_reasoning_tokens(), 32);
 }
 
 #[test]

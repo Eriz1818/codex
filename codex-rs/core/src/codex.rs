@@ -69,6 +69,7 @@ use tracing::info;
 use tracing::instrument;
 use tracing::trace_span;
 use tracing::warn;
+use uuid::Uuid;
 
 use crate::ModelProviderInfo;
 use crate::WireApi;
@@ -748,6 +749,12 @@ impl Session {
         // record_initial_history can emit events. We record only after the SessionConfiguredEvent is emitted.
         sess.record_initial_history(initial_history).await;
 
+        sess.user_hooks().session_start(
+            sess.conversation_id.to_string(),
+            session_configuration.cwd.display().to_string(),
+            session_configuration.session_source.to_string(),
+        );
+
         Ok(sess)
     }
 
@@ -773,11 +780,6 @@ impl Session {
             .next_internal_sub_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         format!("auto-compact-{id}")
-    }
-
-    async fn get_total_token_usage(&self) -> i64 {
-        let state = self.state.lock().await;
-        state.get_total_token_usage()
     }
 
     async fn auto_compact_enabled(&self) -> bool {
@@ -855,6 +857,7 @@ impl Session {
                 }
                 // Flush after seeding history and any persisted rollout copy.
                 self.flush_rollout().await;
+                self.recompute_token_usage(&turn_context).await;
             }
         }
     }
@@ -1378,26 +1381,70 @@ impl Session {
         turn_context: &TurnContext,
         token_usage: Option<&TokenUsage>,
     ) {
-        {
+        let model_context_window = turn_context.client.get_model_context_window();
+        let warning_message = 'warning: {
             let mut state = self.state.lock().await;
-            if let Some(token_usage) = token_usage {
-                state.update_token_info_from_usage(
-                    token_usage,
-                    turn_context.client.get_model_context_window(),
-                );
+            let Some(token_usage) = token_usage else {
+                break 'warning None;
+            };
+            state.update_token_info_from_usage(token_usage, model_context_window);
+
+            let Some(context_window) = model_context_window.filter(|window| *window > 0) else {
+                break 'warning None;
+            };
+
+            let percent_remaining = token_usage.percent_of_context_window_remaining(context_window);
+            state
+                .low_context_warning_state
+                .reset_if_recovered(percent_remaining);
+
+            if percent_remaining > 20 {
+                break 'warning None;
             }
-        }
+
+            if state.auto_compact_enabled
+                && !state.low_context_warning_state.warned_autocompact_threshold
+            {
+                state.low_context_warning_state.warned_autocompact_threshold = true;
+
+                let auto_compact_limit = turn_context
+                    .client
+                    .config()
+                    .model_auto_compact_token_limit
+                    .filter(|limit| *limit > 0)
+                    .unwrap_or_else(|| context_window.saturating_mul(9).saturating_div(10));
+                let trigger_percent = TokenUsage {
+                    total_tokens: auto_compact_limit,
+                    ..TokenUsage::default()
+                }
+                .percent_of_context_window_remaining(context_window);
+
+                break 'warning Some(format!(
+                    "Low context: {percent_remaining}% left. Autocompact will trigger at <= {trigger_percent}%."
+                ));
+            }
+
+            if !state.auto_compact_enabled
+                && percent_remaining <= 10
+                && !state.low_context_warning_state.warned_manual_compact
+            {
+                state.low_context_warning_state.warned_manual_compact = true;
+                break 'warning Some(format!(
+                    "Low context: {percent_remaining}% left. Consider `/compact`. If you don't, the chat will continue until the provider rejects a request."
+                ));
+            }
+
+            break 'warning None;
+        };
         self.send_token_count_event(turn_context).await;
+
+        if let Some(message) = warning_message {
+            self.send_event(turn_context, EventMsg::Warning(WarningEvent { message }))
+                .await;
+        }
     }
 
-    pub(crate) async fn recompute_token_usage(&self, turn_context: &TurnContext) {
-        let Some(estimated_total_tokens) = self
-            .clone_history()
-            .await
-            .estimate_token_count(turn_context)
-        else {
-            return;
-        };
+    async fn update_prompt_token_estimate(&self, turn_context: &TurnContext, total_tokens: i64) {
         {
             let mut state = self.state.lock().await;
             let mut info = state.token_info().unwrap_or(TokenUsageInfo {
@@ -1407,11 +1454,8 @@ impl Session {
             });
 
             info.last_token_usage = TokenUsage {
-                input_tokens: 0,
-                cached_input_tokens: 0,
-                output_tokens: 0,
-                reasoning_output_tokens: 0,
-                total_tokens: estimated_total_tokens.max(0),
+                total_tokens: total_tokens.max(0),
+                ..TokenUsage::default()
             };
 
             if info.model_context_window.is_none() {
@@ -1423,16 +1467,67 @@ impl Session {
         self.send_token_count_event(turn_context).await;
     }
 
+    async fn estimate_prompt_token_count<'a, I>(
+        &self,
+        turn_context: &TurnContext,
+        extra_items: I,
+    ) -> i64
+    where
+        I: IntoIterator<Item = &'a ResponseItem>,
+    {
+        let model_family = turn_context.client.get_model_family();
+
+        let mcp_tools = Some(
+            self.services
+                .mcp_connection_manager
+                .read()
+                .await
+                .list_all_tools()
+                .await
+                .into_iter()
+                .map(|(name, tool)| (name, tool.tool))
+                .collect(),
+        );
+
+        let router = ToolRouter::from_config(&turn_context.tools_config, mcp_tools);
+        let mut history = self.clone_history().await;
+        let mut input = history.get_history_for_prompt();
+        input.extend(extra_items.into_iter().cloned());
+        let prompt = Prompt {
+            input,
+            tools: router.specs(),
+            parallel_tool_calls: model_family.supports_parallel_tool_calls
+                && self.enabled(Feature::ParallelToolCalls),
+            base_instructions_override: turn_context.base_instructions.clone(),
+            output_schema: turn_context.final_output_json_schema.clone(),
+        };
+
+        prompt.estimate_token_count(&model_family)
+    }
+
+    pub(crate) async fn recompute_token_usage(&self, turn_context: &TurnContext) {
+        let estimated_total_tokens = self
+            .estimate_prompt_token_count(turn_context, std::iter::empty::<&ResponseItem>())
+            .await;
+        self.update_prompt_token_estimate(turn_context, estimated_total_tokens)
+            .await;
+    }
+
     pub(crate) async fn update_rate_limits(
         &self,
         turn_context: &TurnContext,
         new_rate_limits: RateLimitSnapshot,
     ) {
-        {
+        let merged_rate_limits = {
             let mut state = self.state.lock().await;
             state.set_rate_limits(new_rate_limits);
-        }
-        self.send_token_count_event(turn_context).await;
+            state.token_info_and_rate_limits().1
+        };
+        let event = EventMsg::TokenCount(TokenCountEvent {
+            info: None,
+            rate_limits: merged_rate_limits,
+        });
+        self.send_event(turn_context, event).await;
     }
 
     async fn send_token_count_event(&self, turn_context: &TurnContext) {
@@ -2134,6 +2229,16 @@ mod handlers {
     }
 
     pub async fn shutdown(sess: &Arc<Session>, sub_id: String) -> bool {
+        let (cwd, session_source) = {
+            let state = sess.state.lock().await;
+            (
+                state.session_configuration.cwd.display().to_string(),
+                state.session_configuration.session_source.to_string(),
+            )
+        };
+        sess.user_hooks()
+            .session_end(sess.conversation_id.to_string(), cwd, session_source);
+
         sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
         sess.services
             .unified_exec_manager
@@ -2350,28 +2455,6 @@ pub(crate) async fn run_task(
                 .unwrap_or(i64::MAX)
         });
 
-    let mut total_usage_tokens = sess.get_total_token_usage().await;
-    if auto_compact_enabled && total_usage_tokens >= auto_compact_limit {
-        run_auto_compact(&sess, &turn_context).await;
-        total_usage_tokens = sess.get_total_token_usage().await;
-    }
-
-    if let Some(context_window) = context_window
-        && total_usage_tokens >= context_window
-    {
-        sess.set_total_tokens_full(&turn_context).await;
-        sess.send_event(
-            &turn_context,
-            EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(None)),
-        )
-        .await;
-        return None;
-    }
-    let event = EventMsg::TaskStarted(TaskStartedEvent {
-        model_context_window: context_window,
-    });
-    sess.send_event(&turn_context, event).await;
-
     let skills_outcome = sess.enabled(Feature::Skills).then(|| {
         sess.services
             .skills_manager
@@ -2383,13 +2466,45 @@ pub(crate) async fn run_task(
         warnings: skill_warnings,
     } = build_skill_injections(&input, skills_outcome.as_ref()).await;
 
+    let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
+    let response_item: ResponseItem = initial_input_for_turn.clone().into();
+
+    for _ in 0..2 {
+        let prompt_tokens = if auto_compact_enabled {
+            sess.estimate_prompt_token_count(
+                &turn_context,
+                std::iter::once(&response_item).chain(skill_items.iter()),
+            )
+            .await
+        } else {
+            0
+        };
+        let tokens_for_auto_compact = {
+            let state = sess.state.lock().await;
+            state
+                .latest_api_token_usage
+                .as_ref()
+                .map(|usage| usage.total_tokens)
+                .unwrap_or(0)
+                .saturating_add(state.history.non_last_encrypted_reasoning_tokens())
+                .max(prompt_tokens)
+        };
+
+        if auto_compact_enabled && tokens_for_auto_compact >= auto_compact_limit {
+            run_auto_compact(&sess, &turn_context).await;
+            continue;
+        }
+        break;
+    }
+    let event = EventMsg::TaskStarted(TaskStartedEvent {
+        model_context_window: context_window,
+    });
+    sess.send_event(&turn_context, event).await;
+
     for message in skill_warnings {
         sess.send_event(&turn_context, EventMsg::Warning(WarningEvent { message }))
             .await;
     }
-
-    let initial_input_for_turn: ResponseInputItem = ResponseInputItem::from(input);
-    let response_item: ResponseItem = initial_input_for_turn.clone().into();
     sess.record_response_item_and_emit_turn_item(turn_context.as_ref(), response_item)
         .await;
 
@@ -2416,12 +2531,38 @@ pub(crate) async fn run_task(
             .map(ResponseItem::from)
             .collect::<Vec<ResponseItem>>();
 
-        // Construct the input that we will send to the model.
-        let turn_input: Vec<ResponseItem> = {
+        for _ in 0..2 {
+            let prompt_tokens = if auto_compact_enabled {
+                sess.estimate_prompt_token_count(&turn_context, pending_input.iter())
+                    .await
+            } else {
+                0
+            };
+            let tokens_for_auto_compact = {
+                let state = sess.state.lock().await;
+                state
+                    .latest_api_token_usage
+                    .as_ref()
+                    .map(|usage| usage.total_tokens)
+                    .unwrap_or(0)
+                    .saturating_add(state.history.non_last_encrypted_reasoning_tokens())
+                    .max(prompt_tokens)
+            };
+
+            if auto_compact_enabled && tokens_for_auto_compact >= auto_compact_limit {
+                run_auto_compact(&sess, &turn_context).await;
+                continue;
+            }
+            break;
+        }
+
+        if !pending_input.is_empty() {
             sess.record_conversation_items(&turn_context, &pending_input)
                 .await;
-            sess.clone_history().await.get_history_for_prompt()
-        };
+        }
+
+        // Construct the input that we will send to the model.
+        let turn_input: Vec<ResponseItem> = sess.clone_history().await.get_history_for_prompt();
 
         let turn_input_messages = turn_input
             .iter()
@@ -2445,25 +2586,6 @@ pub(crate) async fn run_task(
                     needs_follow_up,
                     last_agent_message: turn_last_agent_message,
                 } = turn_output;
-                let total_usage_tokens = sess.get_total_token_usage().await;
-                let token_limit_reached = total_usage_tokens >= auto_compact_limit;
-
-                // as long as compaction works well in getting us way below the token limit, we shouldn't worry about being in an infinite loop.
-                if auto_compact_enabled && token_limit_reached && needs_follow_up {
-                    run_auto_compact(&sess, &turn_context).await;
-                    if let Some(context_window) = context_window
-                        && sess.get_total_token_usage().await >= context_window
-                    {
-                        sess.set_total_tokens_full(&turn_context).await;
-                        sess.send_event(
-                            &turn_context,
-                            EventMsg::Error(CodexErr::ContextWindowExceeded.to_error_event(None)),
-                        )
-                        .await;
-                        break;
-                    }
-                    continue;
-                }
 
                 if !needs_follow_up {
                     last_agent_message = turn_last_agent_message;
@@ -2480,6 +2602,7 @@ pub(crate) async fn run_task(
             }
             Err(CodexErr::TurnAborted) => {
                 // Aborted turn is reported via a different event.
+                sess.recompute_token_usage(&turn_context).await;
                 break;
             }
             Err(CodexErr::InvalidImageRequest()) => {
@@ -2488,6 +2611,8 @@ pub(crate) async fn run_task(
                     "Invalid image detected, replacing it in the last turn to prevent poisoning",
                 );
                 state.history.replace_last_turn_images("Invalid image");
+                drop(state);
+                sess.recompute_token_usage(&turn_context).await;
             }
             Err(e) => {
                 info!("Turn error: {e:#}");
@@ -2556,7 +2681,7 @@ async fn run_turn(
         output_schema: turn_context.final_output_json_schema.clone(),
     };
 
-    let mut retries = 0;
+    let mut retries: u64 = 0;
     loop {
         match try_run_turn(
             Arc::clone(&router),
@@ -2564,6 +2689,7 @@ async fn run_turn(
             Arc::clone(&turn_context),
             Arc::clone(&turn_diff_tracker),
             &prompt,
+            u32::try_from(retries.saturating_add(1)).unwrap_or(u32::MAX),
             cancellation_token.child_token(),
         )
         .await
@@ -2576,7 +2702,9 @@ async fn run_turn(
             Err(CodexErr::Interrupted) => return Err(CodexErr::Interrupted),
             Err(CodexErr::EnvVar(var)) => return Err(CodexErr::EnvVar(var)),
             Err(e @ CodexErr::Fatal(_)) => return Err(e),
-            Err(e @ CodexErr::ContextWindowExceeded) => {
+            Err(
+                e @ (CodexErr::ContextWindowExceeded | CodexErr::ProviderContextWindowExceeded(_)),
+            ) => {
                 sess.set_total_tokens_full(&turn_context).await;
                 return Err(e);
             }
@@ -2593,6 +2721,10 @@ async fn run_turn(
             Err(e @ CodexErr::InvalidRequest(_)) => return Err(e),
             Err(e @ CodexErr::RefreshTokenFailed(_)) => return Err(e),
             Err(e) => {
+                if !matches!(e, CodexErr::Stream(_, _)) {
+                    return Err(e);
+                }
+
                 // Use the configured provider-specific stream retry budget.
                 let max_retries = turn_context.client.get_provider().stream_max_retries();
                 if retries < max_retries {
@@ -2663,6 +2795,7 @@ async fn try_run_turn(
     turn_context: Arc<TurnContext>,
     turn_diff_tracker: SharedTurnDiffTracker,
     prompt: &Prompt,
+    attempt: u32,
     cancellation_token: CancellationToken,
 ) -> CodexResult<TurnRunResult> {
     let rollout_item = RolloutItem::TurnContext(TurnContextItem {
@@ -2680,6 +2813,21 @@ async fn try_run_turn(
     });
 
     sess.persist_rollout_items(&[rollout_item]).await;
+
+    let model_request_id = Uuid::new_v4();
+    sess.user_hooks().model_request_started(
+        sess.conversation_id.to_string(),
+        turn_context.sub_id.clone(),
+        turn_context.cwd.display().to_string(),
+        model_request_id,
+        attempt,
+        turn_context.client.get_model(),
+        turn_context.client.get_provider().name,
+        prompt.input.len(),
+        prompt.tools.len(),
+        prompt.parallel_tool_calls,
+        prompt.output_schema.is_some(),
+    );
     let mut stream = turn_context
         .client
         .clone()
@@ -2693,11 +2841,16 @@ async fn try_run_turn(
         Arc::clone(&sess),
         Arc::clone(&turn_context),
         Arc::clone(&turn_diff_tracker),
+        sess.conversation_id.to_string(),
+        model_request_id,
+        attempt,
     );
     let mut in_flight: FuturesOrdered<BoxFuture<'static, CodexResult<ResponseInputItem>>> =
         FuturesOrdered::new();
     let mut needs_follow_up = false;
     let mut last_agent_message: Option<String> = None;
+    let mut response_id: Option<String> = None;
+    let mut response_token_usage: Option<Option<TokenUsage>> = None;
     let mut active_item: Option<TurnItem> = None;
     let mut should_emit_turn_diff = false;
     let receiving_span = trace_span!("receiving_stream");
@@ -2765,16 +2918,16 @@ async fn try_run_turn(
                 }
             }
             ResponseEvent::RateLimits(snapshot) => {
-                // Update internal state with latest rate limits, but defer sending until
-                // token usage is available to avoid duplicate TokenCount events.
                 sess.update_rate_limits(&turn_context, snapshot).await;
             }
             ResponseEvent::Completed {
-                response_id: _,
+                response_id: completed_response_id,
                 token_usage,
             } => {
                 sess.update_token_usage_info(&turn_context, token_usage.as_ref())
                     .await;
+                response_id = Some(completed_response_id);
+                response_token_usage = Some(token_usage);
                 should_emit_turn_diff = true;
 
                 break Ok(TurnRunResult {
@@ -2860,6 +3013,19 @@ async fn try_run_turn(
             let msg = EventMsg::TurnDiff(TurnDiffEvent { unified_diff });
             sess.clone().send_event(&turn_context, msg).await;
         }
+    }
+
+    if let (Some(response_id), Some(token_usage)) = (response_id, response_token_usage) {
+        sess.user_hooks().model_response_completed(
+            sess.conversation_id.to_string(),
+            turn_context.sub_id.clone(),
+            turn_context.cwd.display().to_string(),
+            model_request_id,
+            attempt,
+            response_id,
+            token_usage,
+            needs_follow_up,
+        );
     }
 
     outcome

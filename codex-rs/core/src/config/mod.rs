@@ -194,6 +194,9 @@ pub struct Config {
     /// Show startup tooltips in the TUI welcome screen.
     pub show_tooltips: bool,
 
+    /// When true, the TUI asks for confirmation before exiting if external hooks are still running.
+    pub tui_confirm_exit_with_running_hooks: bool,
+
     /// Override the events-per-wheel-tick factor for TUI2 scroll normalization.
     ///
     /// This is the same `tui.scroll_events_per_tick` value from `config.toml`, plumbed through the
@@ -1055,6 +1058,30 @@ pub struct HooksConfig {
     #[serde(default)]
     pub approval_requested: Vec<Vec<String>>,
 
+    /// Hooks invoked when a session has started (after `SessionConfigured` is emitted).
+    #[serde(default)]
+    pub session_start: Vec<Vec<String>>,
+
+    /// Hooks invoked when a session is ending (best-effort during shutdown).
+    #[serde(default)]
+    pub session_end: Vec<Vec<String>>,
+
+    /// Hooks invoked immediately before issuing a model request.
+    #[serde(default)]
+    pub model_request_started: Vec<Vec<String>>,
+
+    /// Hooks invoked after a model response has completed.
+    #[serde(default)]
+    pub model_response_completed: Vec<Vec<String>>,
+
+    /// Hooks invoked when a tool call begins execution.
+    #[serde(default)]
+    pub tool_call_started: Vec<Vec<String>>,
+
+    /// Hooks invoked when a tool call has finished (success/failure/aborted).
+    #[serde(default)]
+    pub tool_call_finished: Vec<Vec<String>>,
+
     /// Maximum payload size (in bytes) to send directly via stdin.
     ///
     /// When the serialized payload exceeds this threshold, Codex writes it to a
@@ -1083,6 +1110,12 @@ impl Default for HooksConfig {
         Self {
             agent_turn_complete: Vec::new(),
             approval_requested: Vec::new(),
+            session_start: Vec::new(),
+            session_end: Vec::new(),
+            model_request_started: Vec::new(),
+            model_response_completed: Vec::new(),
+            tool_call_started: Vec::new(),
+            tool_call_finished: Vec::new(),
             max_stdin_payload_bytes: Self::default_max_stdin_payload_bytes(),
             keep_last_n_payloads: Self::default_keep_last_n_payloads(),
         }
@@ -1457,6 +1490,11 @@ impl Config {
                 .unwrap_or_default(),
             animations: cfg.tui.as_ref().map(|t| t.animations).unwrap_or(true),
             show_tooltips: cfg.tui.as_ref().map(|t| t.show_tooltips).unwrap_or(true),
+            tui_confirm_exit_with_running_hooks: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.confirm_exit_with_running_hooks)
+                .unwrap_or(true),
             tui_scroll_events_per_tick: cfg.tui.as_ref().and_then(|t| t.scroll_events_per_tick),
             tui_scroll_wheel_lines: cfg.tui.as_ref().and_then(|t| t.scroll_wheel_lines),
             tui_scroll_trackpad_lines: cfg.tui.as_ref().and_then(|t| t.scroll_trackpad_lines),
@@ -1656,6 +1694,7 @@ persistence = "none"
                 notifications: Notifications::Enabled(true),
                 animations: true,
                 show_tooltips: true,
+                confirm_exit_with_running_hooks: true,
                 scroll_events_per_tick: None,
                 scroll_wheel_lines: None,
                 scroll_trackpad_lines: None,
@@ -3263,6 +3302,7 @@ model_verbosity = "high"
                 tui_notifications: Default::default(),
                 animations: true,
                 show_tooltips: true,
+                tui_confirm_exit_with_running_hooks: true,
                 tui_scroll_events_per_tick: None,
                 tui_scroll_wheel_lines: None,
                 tui_scroll_trackpad_lines: None,
@@ -3347,6 +3387,7 @@ model_verbosity = "high"
             tui_notifications: Default::default(),
             animations: true,
             show_tooltips: true,
+            tui_confirm_exit_with_running_hooks: true,
             tui_scroll_events_per_tick: None,
             tui_scroll_wheel_lines: None,
             tui_scroll_trackpad_lines: None,
@@ -3446,6 +3487,7 @@ model_verbosity = "high"
             tui_notifications: Default::default(),
             animations: true,
             show_tooltips: true,
+            tui_confirm_exit_with_running_hooks: true,
             tui_scroll_events_per_tick: None,
             tui_scroll_wheel_lines: None,
             tui_scroll_trackpad_lines: None,
@@ -3531,6 +3573,7 @@ model_verbosity = "high"
             tui_notifications: Default::default(),
             animations: true,
             show_tooltips: true,
+            tui_confirm_exit_with_running_hooks: true,
             tui_scroll_events_per_tick: None,
             tui_scroll_wheel_lines: None,
             tui_scroll_trackpad_lines: None,

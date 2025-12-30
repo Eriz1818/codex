@@ -1,9 +1,15 @@
 use crate::client_common::tools::ToolSpec;
+use crate::context_manager::estimate_reasoning_length;
 use crate::error::Result;
 use crate::models_manager::model_family::ModelFamily;
+use crate::truncate::approx_token_count;
 pub use codex_api::common::ResponseEvent;
 use codex_apply_patch::APPLY_PATCH_TOOL_INSTRUCTIONS;
+use codex_protocol::models::ContentItem;
+use codex_protocol::models::FunctionCallOutputContentItem;
+use codex_protocol::models::LocalShellAction;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::WebSearchAction;
 use futures::Stream;
 use serde::Deserialize;
 use serde_json::Value;
@@ -84,6 +90,157 @@ impl Prompt {
         }
 
         input
+    }
+
+    pub(crate) fn estimate_token_count(&self, model: &ModelFamily) -> i64 {
+        let instructions = self.get_full_instructions(model);
+        let instructions_tokens =
+            i64::try_from(approx_token_count(instructions.as_ref())).unwrap_or(i64::MAX);
+
+        // IMPORTANT: this is a heuristic. Prefer counting the actual text fields that are
+        // semantically visible to the model instead of serializing entire ResponseItems to JSON,
+        // which can drastically overestimate due to structural keys.
+        //
+        // NOTE: encrypted reasoning uses `estimate_reasoning_length` (decoded bytes after overhead)
+        // and is intentionally over-counted versus tokens to keep auto-compact decisions
+        // conservative.
+        let estimate_item_tokens = |item: &ResponseItem| -> i64 {
+            let estimate_str_tokens =
+                |text: &str| -> i64 { i64::try_from(approx_token_count(text)).unwrap_or(i64::MAX) };
+            let estimate_content_item_tokens = |content: &ContentItem| -> i64 {
+                match content {
+                    ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                        estimate_str_tokens(text)
+                    }
+                    ContentItem::InputImage { image_url } => estimate_str_tokens(image_url),
+                }
+            };
+            let estimate_fco_item_tokens = |content: &FunctionCallOutputContentItem| -> i64 {
+                match content {
+                    FunctionCallOutputContentItem::InputText { text } => estimate_str_tokens(text),
+                    FunctionCallOutputContentItem::InputImage { image_url } => {
+                        estimate_str_tokens(image_url)
+                    }
+                }
+            };
+
+            match item {
+                ResponseItem::GhostSnapshot { .. } => 0,
+                ResponseItem::Reasoning {
+                    encrypted_content: Some(content),
+                    ..
+                }
+                | ResponseItem::Compaction {
+                    encrypted_content: content,
+                } => estimate_reasoning_length(content.len()) as i64,
+                ResponseItem::Message { role, content, .. } => estimate_str_tokens(role)
+                    .saturating_add(content.iter().fold(0i64, |acc, item| {
+                        acc.saturating_add(estimate_content_item_tokens(item))
+                    })),
+                ResponseItem::FunctionCall {
+                    name, arguments, ..
+                } => estimate_str_tokens(name).saturating_add(estimate_str_tokens(arguments)),
+                ResponseItem::FunctionCallOutput { output, .. } => {
+                    if let Some(items) = output.content_items.as_ref() {
+                        items.iter().fold(0i64, |acc, item| {
+                            acc.saturating_add(estimate_fco_item_tokens(item))
+                        })
+                    } else {
+                        estimate_str_tokens(&output.content)
+                    }
+                }
+                ResponseItem::CustomToolCall { name, input, .. } => {
+                    estimate_str_tokens(name).saturating_add(estimate_str_tokens(input))
+                }
+                ResponseItem::CustomToolCallOutput { output, .. } => estimate_str_tokens(output),
+                ResponseItem::LocalShellCall { action, .. } => match action {
+                    LocalShellAction::Exec(exec) => {
+                        let command = exec.command.join(" ");
+                        let mut total = estimate_str_tokens(&command);
+                        if let Some(working_directory) = exec.working_directory.as_ref() {
+                            total = total.saturating_add(estimate_str_tokens(working_directory));
+                        }
+                        if let Some(user) = exec.user.as_ref() {
+                            total = total.saturating_add(estimate_str_tokens(user));
+                        }
+                        if let Some(env) = exec.env.as_ref() {
+                            total = env.iter().fold(total, |acc, (k, v)| {
+                                acc.saturating_add(estimate_str_tokens(k))
+                                    .saturating_add(estimate_str_tokens(v))
+                            });
+                        }
+                        total
+                    }
+                },
+                ResponseItem::WebSearchCall { action, .. } => match action {
+                    WebSearchAction::Search { query } => {
+                        query.as_ref().map_or(0, |query| estimate_str_tokens(query))
+                    }
+                    WebSearchAction::OpenPage { url } => {
+                        url.as_ref().map_or(0, |url| estimate_str_tokens(url))
+                    }
+                    WebSearchAction::FindInPage { url, pattern } => url
+                        .as_ref()
+                        .map_or(0, |url| estimate_str_tokens(url))
+                        .saturating_add(
+                            pattern
+                                .as_ref()
+                                .map_or(0, |pattern| estimate_str_tokens(pattern)),
+                        ),
+                    WebSearchAction::Other => 0,
+                },
+                ResponseItem::Reasoning { .. } => 0,
+                ResponseItem::Other => 0,
+            }
+        };
+
+        let formatted_input = self.get_formatted_input();
+        let last_user_message_index = formatted_input
+            .iter()
+            .rposition(|item| matches!(item, ResponseItem::Message { role, .. } if role == "user"));
+
+        let input_tokens = formatted_input
+            .iter()
+            .enumerate()
+            .fold(0i64, |acc, (idx, item)| {
+                let should_count_reasoning = last_user_message_index
+                    .map(|last_user| idx < last_user)
+                    .unwrap_or(true);
+                acc.saturating_add(match item {
+                    ResponseItem::Reasoning {
+                        encrypted_content: Some(content),
+                        ..
+                    } if should_count_reasoning => estimate_reasoning_length(content.len()) as i64,
+                    ResponseItem::Reasoning { .. } => 0,
+                    _ => estimate_item_tokens(item),
+                })
+            });
+
+        let tools_tokens = if self.tools.is_empty() {
+            0
+        } else {
+            match serde_json::to_string(&self.tools) {
+                Ok(serialized) => {
+                    i64::try_from(approx_token_count(&serialized)).unwrap_or(i64::MAX)
+                }
+                Err(_) => i64::MAX,
+            }
+        };
+
+        let schema_tokens =
+            self.output_schema
+                .as_ref()
+                .map_or(0, |schema| match serde_json::to_string(schema) {
+                    Ok(serialized) => {
+                        i64::try_from(approx_token_count(&serialized)).unwrap_or(i64::MAX)
+                    }
+                    Err(_) => i64::MAX,
+                });
+
+        instructions_tokens
+            .saturating_add(input_tokens)
+            .saturating_add(tools_tokens)
+            .saturating_add(schema_tokens)
     }
 }
 
@@ -427,5 +584,31 @@ mod tests {
 
         let v = serde_json::to_value(&req).expect("json");
         assert!(v.get("text").is_none());
+    }
+
+    #[test]
+    fn estimate_token_count_includes_tool_specs() {
+        let config = test_config();
+        let model_family = ModelsManager::construct_model_family_offline("gpt-4.1", &config);
+
+        let prompt_without = Prompt::default();
+
+        let prompt_with = Prompt {
+            tools: vec![ToolSpec::Freeform(tools::FreeformTool {
+                name: "example_tool".to_string(),
+                description: "Example tool with a large definition".to_string(),
+                format: tools::FreeformToolFormat {
+                    r#type: "grammar".to_string(),
+                    syntax: "lark".to_string(),
+                    definition: "x".repeat(4096),
+                },
+            })],
+            ..Default::default()
+        };
+
+        assert!(
+            prompt_with.estimate_token_count(&model_family)
+                > prompt_without.estimate_token_count(&model_family)
+        );
     }
 }

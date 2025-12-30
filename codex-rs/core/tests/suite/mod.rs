@@ -25,6 +25,7 @@ mod codex_delegate;
 mod compact;
 mod compact_remote;
 mod compact_resume_fork;
+mod context_window_accounting;
 mod deprecation_notice;
 mod exec;
 mod exec_policy;

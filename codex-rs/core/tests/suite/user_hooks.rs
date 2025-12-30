@@ -171,3 +171,226 @@ async fn hooks_approval_requested_invoked_for_exec() -> Result<()> {
 
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hooks_session_start_invoked() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let hook_dir = TempDir::new()?;
+    let hook_script = write_hook_script(&hook_dir, "hook.sh", "session_start.json")?;
+    let hook_file = hook_dir.path().join("session_start.json");
+
+    let _codex = test_codex()
+        .with_config(move |cfg| {
+            cfg.hooks.session_start = vec![vec![hook_script]];
+        })
+        .build(&server)
+        .await?;
+
+    fs_wait::wait_for_path_exists(&hook_file, Duration::from_secs(5)).await?;
+    let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
+    let payload: Value = serde_json::from_str(&hook_payload_raw)?;
+
+    assert_eq!(payload["schema-version"], json!(1));
+    assert_eq!(payload["type"], json!("session-start"));
+    assert_eq!(payload["session-source"], json!("exec"));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hooks_model_request_started_invoked() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    responses::mount_sse_once(
+        &server,
+        sse(vec![ev_assistant_message("m1", "Done"), ev_completed("r1")]),
+    )
+    .await;
+
+    let hook_dir = TempDir::new()?;
+    let hook_script = write_hook_script(&hook_dir, "hook.sh", "model_request.json")?;
+    let hook_file = hook_dir.path().join("model_request.json");
+
+    let TestCodex { codex, .. } = test_codex()
+        .with_config(move |cfg| {
+            cfg.hooks.model_request_started = vec![vec![hook_script]];
+        })
+        .build(&server)
+        .await?;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello world".into(),
+            }],
+        })
+        .await?;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    fs_wait::wait_for_path_exists(&hook_file, Duration::from_secs(5)).await?;
+    let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
+    let payload: Value = serde_json::from_str(&hook_payload_raw)?;
+
+    assert_eq!(payload["schema-version"], json!(1));
+    assert_eq!(payload["type"], json!("model-request-started"));
+    assert_eq!(payload["attempt"], json!(1));
+    assert!(payload["model-request-id"].is_string());
+    assert!(payload["prompt-input-item-count"].as_i64().unwrap_or(0) > 0);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hooks_model_response_completed_invoked() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    responses::mount_sse_once(
+        &server,
+        sse(vec![ev_assistant_message("m1", "Done"), ev_completed("r1")]),
+    )
+    .await;
+
+    let hook_dir = TempDir::new()?;
+    let hook_script = write_hook_script(&hook_dir, "hook.sh", "model_response.json")?;
+    let hook_file = hook_dir.path().join("model_response.json");
+
+    let TestCodex { codex, .. } = test_codex()
+        .with_config(move |cfg| {
+            cfg.hooks.model_response_completed = vec![vec![hook_script]];
+        })
+        .build(&server)
+        .await?;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello world".into(),
+            }],
+        })
+        .await?;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    fs_wait::wait_for_path_exists(&hook_file, Duration::from_secs(5)).await?;
+    let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
+    let payload: Value = serde_json::from_str(&hook_payload_raw)?;
+
+    assert_eq!(payload["schema-version"], json!(1));
+    assert_eq!(payload["type"], json!("model-response-completed"));
+    assert_eq!(payload["attempt"], json!(1));
+    assert!(payload["model-request-id"].is_string());
+    assert_eq!(payload["response-id"], json!("r1"));
+    assert_eq!(payload["needs-follow-up"], json!(false));
+    assert_eq!(payload["token-usage"]["total_tokens"], json!(0));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hooks_tool_call_started_and_finished_invoked() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let call_id = "hooks-tool-call";
+    let args = json!({
+        "command": ["/bin/sh", "-c", "echo hook-test"],
+        "timeout_ms": 1_000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "shell", &serde_json::to_string(&args)?),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("m1", "Done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    mount_sse_sequence(&server, responses).await;
+
+    let hook_dir = TempDir::new()?;
+    let started_hook_script = write_hook_script(&hook_dir, "hook_started.sh", "tool_started.json")?;
+    let finished_hook_script =
+        write_hook_script(&hook_dir, "hook_finished.sh", "tool_finished.json")?;
+    let started_file = hook_dir.path().join("tool_started.json");
+    let finished_file = hook_dir.path().join("tool_finished.json");
+
+    let TestCodex { codex, .. } = test_codex()
+        .with_config(move |cfg| {
+            cfg.hooks.tool_call_started = vec![vec![started_hook_script]];
+            cfg.hooks.tool_call_finished = vec![vec![finished_hook_script]];
+            cfg.approval_policy = Constrained::allow_any(AskForApproval::Never);
+        })
+        .build(&server)
+        .await?;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "run a shell command".into(),
+            }],
+        })
+        .await?;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    fs_wait::wait_for_path_exists(&started_file, Duration::from_secs(5)).await?;
+    fs_wait::wait_for_path_exists(&finished_file, Duration::from_secs(5)).await?;
+
+    let started_raw = tokio::fs::read_to_string(&started_file).await?;
+    let started_payload: Value = serde_json::from_str(&started_raw)?;
+    assert_eq!(started_payload["schema-version"], json!(1));
+    assert_eq!(started_payload["type"], json!("tool-call-started"));
+    assert_eq!(started_payload["call-id"], json!(call_id));
+
+    let finished_raw = tokio::fs::read_to_string(&finished_file).await?;
+    let finished_payload: Value = serde_json::from_str(&finished_raw)?;
+    assert_eq!(finished_payload["schema-version"], json!(1));
+    assert_eq!(finished_payload["type"], json!("tool-call-finished"));
+    assert_eq!(finished_payload["call-id"], json!(call_id));
+    assert_eq!(finished_payload["tool-name"], json!("shell"));
+    assert_eq!(finished_payload["status"], json!("completed"));
+    assert!(finished_payload["duration-ms"].as_u64().is_some());
+    assert!(finished_payload["success"].is_boolean());
+    assert!(finished_payload["output-bytes"].as_u64().is_some());
+    assert!(finished_payload["output-preview"].is_string());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hooks_session_end_invoked() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let hook_dir = TempDir::new()?;
+    let hook_script = write_hook_script(&hook_dir, "hook.sh", "session_end.json")?;
+    let hook_file = hook_dir.path().join("session_end.json");
+
+    let TestCodex { codex, .. } = test_codex()
+        .with_config(move |cfg| {
+            cfg.hooks.session_end = vec![vec![hook_script]];
+        })
+        .build(&server)
+        .await?;
+
+    codex.submit(Op::Shutdown).await?;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::ShutdownComplete)).await;
+
+    fs_wait::wait_for_path_exists(&hook_file, Duration::from_secs(5)).await?;
+    let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
+    let payload: Value = serde_json::from_str(&hook_payload_raw)?;
+
+    assert_eq!(payload["schema-version"], json!(1));
+    assert_eq!(payload["type"], json!("session-end"));
+    assert_eq!(payload["session-source"], json!("exec"));
+
+    Ok(())
+}

@@ -459,6 +459,7 @@ impl App {
                     init,
                     resumed.conversation,
                     resumed.session_configured,
+                    false,
                 )
             }
         };
@@ -1407,6 +1408,7 @@ impl App {
                                     init,
                                     resumed.conversation,
                                     resumed.session_configured,
+                                    true,
                                 );
                                 self.current_model = model_family.get_model_slug().to_string();
                                 if let Some(summary) = summary {
@@ -1458,6 +1460,9 @@ impl App {
                     if self.overlay.is_some() {
                         self.deferred_history_lines.extend(display);
                     }
+                    // Ensure a redraw occurs even if we happened to draw before the queued
+                    // InsertHistoryCell was handled (e.g., SessionConfigured on startup).
+                    tui.frame_requester().schedule_frame();
                 }
             }
             AppEvent::StartCommitAnimation => {

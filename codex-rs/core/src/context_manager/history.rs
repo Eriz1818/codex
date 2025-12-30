@@ -1,7 +1,5 @@
-use crate::codex::TurnContext;
 use crate::context_manager::normalize;
 use crate::truncate::TruncationPolicy;
-use crate::truncate::approx_token_count;
 use crate::truncate::approx_tokens_from_byte_count;
 use crate::truncate::truncate_function_output_items_with_policy;
 use crate::truncate::truncate_text;
@@ -77,34 +75,6 @@ impl ContextManager {
         history
     }
 
-    // Estimate token usage using byte-based heuristics from the truncation helpers.
-    // This is a coarse lower bound, not a tokenizer-accurate count.
-    pub(crate) fn estimate_token_count(&self, turn_context: &TurnContext) -> Option<i64> {
-        let model_family = turn_context.client.get_model_family();
-        let base_tokens =
-            i64::try_from(approx_token_count(model_family.base_instructions.as_str()))
-                .unwrap_or(i64::MAX);
-
-        let items_tokens = self.items.iter().fold(0i64, |acc, item| {
-            acc + match item {
-                ResponseItem::GhostSnapshot { .. } => 0,
-                ResponseItem::Reasoning {
-                    encrypted_content: Some(content),
-                    ..
-                }
-                | ResponseItem::Compaction {
-                    encrypted_content: content,
-                } => estimate_reasoning_length(content.len()) as i64,
-                item => {
-                    let serialized = serde_json::to_string(item).unwrap_or_default();
-                    i64::try_from(approx_token_count(&serialized)).unwrap_or(i64::MAX)
-                }
-            }
-        });
-
-        Some(base_tokens.saturating_add(items_tokens))
-    }
-
     pub(crate) fn remove_first_item(&mut self) {
         if !self.items.is_empty() {
             // Remove the oldest item (front of the list). Items are ordered from
@@ -164,44 +134,32 @@ impl ContextManager {
         );
     }
 
-    fn get_non_last_reasoning_items_tokens(&self) -> usize {
-        // get reasoning items excluding all the ones after the last user message
+    pub(crate) fn non_last_encrypted_reasoning_tokens(&self) -> i64 {
+        // Ignore encrypted reasoning emitted after the most recent user message: it does
+        // not need to participate in auto-compact gating and can be very large.
         let Some(last_user_index) = self
             .items
             .iter()
             .rposition(|item| matches!(item, ResponseItem::Message { role, .. } if role == "user"))
         else {
-            return 0usize;
+            return 0;
         };
 
         let total_reasoning_bytes = self
             .items
             .iter()
             .take(last_user_index)
-            .filter_map(|item| {
-                if let ResponseItem::Reasoning {
+            .filter_map(|item| match item {
+                ResponseItem::Reasoning {
                     encrypted_content: Some(content),
                     ..
-                } = item
-                {
-                    Some(content.len())
-                } else {
-                    None
-                }
+                } => Some(content.len()),
+                _ => None,
             })
             .map(estimate_reasoning_length)
             .fold(0usize, usize::saturating_add);
 
-        let token_estimate = approx_tokens_from_byte_count(total_reasoning_bytes);
-        token_estimate as usize
-    }
-
-    pub(crate) fn get_total_token_usage(&self) -> i64 {
-        self.token_info
-            .as_ref()
-            .map(|info| info.last_token_usage.total_tokens)
-            .unwrap_or(0)
-            .saturating_add(self.get_non_last_reasoning_items_tokens() as i64)
+        i64::try_from(approx_tokens_from_byte_count(total_reasoning_bytes)).unwrap_or(i64::MAX)
     }
 
     /// This function enforces a couple of invariants on the in-memory history:
@@ -283,7 +241,7 @@ fn is_api_message(message: &ResponseItem) -> bool {
     }
 }
 
-fn estimate_reasoning_length(encoded_len: usize) -> usize {
+pub(crate) fn estimate_reasoning_length(encoded_len: usize) -> usize {
     encoded_len
         .saturating_mul(3)
         .checked_div(4)

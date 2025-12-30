@@ -20,17 +20,27 @@ codex --no-hooks
 codex exec --no-hooks "…"
 ```
 
+In the interactive TUI, quitting while hooks are still running prompts for confirmation by default. Toggle with `tui.confirm_exit_with_running_hooks`.
+
 ## Supported events
 
 - `agent_turn_complete`: runs after each completed turn
 - `approval_requested`: runs when Codex asks for approval (exec / apply-patch / MCP elicitation)
+- `session_start`: runs when a session starts (after `SessionConfigured`)
+- `session_end`: runs when a session ends (best-effort during shutdown)
+- `model_request_started`: runs immediately before issuing a model request
+- `model_response_completed`: runs after a model response completes
+- `tool_call_started`: runs when a tool call begins execution
+- `tool_call_finished`: runs when a tool call finishes (success/failure/aborted)
+
+Note: `tool_call_started` is emitted when the tool call is dispatched; `duration-ms` in `tool_call_finished` includes any time spent queued behind non-parallel tool calls.
 
 Each hook command receives event JSON on **stdin**.
 
 The payload always includes (at minimum):
 
 - `schema-version`: currently `1`
-- `type`: `agent-turn-complete` or `approval-requested`
+- `type`: kebab-case event type (for example `agent-turn-complete`, `model-request-started`, `tool-call-finished`)
 - `event-id`: unique id for the event
 - `timestamp`: RFC3339 timestamp
 

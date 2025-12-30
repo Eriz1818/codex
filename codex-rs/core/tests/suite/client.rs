@@ -14,9 +14,9 @@ use codex_core::ResponseItem;
 use codex_core::WireApi;
 use codex_core::auth::AuthCredentialsStoreMode;
 use codex_core::built_in_model_providers;
-use codex_core::error::CodexErr;
 use codex_core::features::Feature;
 use codex_core::models_manager::manager::ModelsManager;
+use codex_core::protocol::CodexErrorInfo;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
 use codex_core::protocol::SessionSource;
@@ -1543,11 +1543,14 @@ async fn context_window_error_sets_total_tokens_to_model_window() -> anyhow::Res
     assert_eq!(info.last_token_usage.total_tokens, EFFECTIVE_CONTEXT_WINDOW);
 
     let error_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Error(_))).await;
-    let expected_context_window_message = CodexErr::ContextWindowExceeded.to_string();
     assert!(
         matches!(
             error_event,
-            EventMsg::Error(ref err) if err.message == expected_context_window_message
+            EventMsg::Error(ref err)
+                if err.codex_error_info == Some(CodexErrorInfo::ContextWindowExceeded)
+                    && err.message.contains("provider rejected")
+                    && err.message.contains("context_length_exceeded")
+                    && err.message.contains("Your input exceeds the context window")
         ),
         "expected context window error; got {error_event:?}"
     );

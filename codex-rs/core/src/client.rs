@@ -92,10 +92,15 @@ impl ModelClient {
         }
     }
 
-    /// Returns the full model context window for accurate display.
-    /// Operational thresholds (auto-compact) use their own limits.
+    /// Returns the effective model context window used for display and local gating.
+    ///
+    /// Reserves headroom via `ModelFamily::effective_context_window_percent`.
     pub fn get_model_context_window(&self) -> Option<i64> {
-        self.get_model_family().context_window
+        let model_family = self.get_model_family();
+        let percent = model_family.effective_context_window_percent.clamp(1, 100);
+        model_family
+            .context_window
+            .map(|window| window.saturating_mul(percent) / 100)
     }
 
     pub fn config(&self) -> Arc<Config> {

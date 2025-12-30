@@ -17,7 +17,11 @@ use crate::token_data::PlanType;
 
 pub(crate) fn map_api_error(err: ApiError) -> CodexErr {
     match err {
-        ApiError::ContextWindowExceeded => CodexErr::ContextWindowExceeded,
+        ApiError::ContextWindowExceeded { message } => CodexErr::ProviderContextWindowExceeded(
+            message
+                .filter(|msg| !msg.trim().is_empty())
+                .unwrap_or_else(|| "context_length_exceeded".to_string()),
+        ),
         ApiError::QuotaExceeded => CodexErr::QuotaExceeded,
         ApiError::UsageNotIncluded => CodexErr::UsageNotIncluded,
         ApiError::Retryable { message, delay } => CodexErr::Stream(message, delay),

@@ -403,6 +403,11 @@ pub struct Tui {
     #[serde(default = "default_true")]
     pub show_tooltips: bool,
 
+    /// When true, the TUI asks for confirmation before exiting if external hooks are still running.
+    /// Defaults to `true`.
+    #[serde(default = "default_true")]
+    pub confirm_exit_with_running_hooks: bool,
+
     /// Override the *wheel* event density used to normalize TUI2 scrolling.
     ///
     /// Terminals generally deliver both mouse wheels and trackpads as discrete `scroll up/down`

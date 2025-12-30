@@ -458,6 +458,12 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             [
                 "hooks.agent_turn_complete=[]",
                 "hooks.approval_requested=[]",
+                "hooks.session_start=[]",
+                "hooks.session_end=[]",
+                "hooks.model_request_started=[]",
+                "hooks.model_response_completed=[]",
+                "hooks.tool_call_started=[]",
+                "hooks.tool_call_finished=[]",
             ]
             .map(ToString::to_string),
         );

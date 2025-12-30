@@ -11,6 +11,7 @@ Usage:
 
 Options:
   --release    Build `target/release/codex` instead of `target/debug/codex`.
+  --debug      Build `target/debug/codex` (default).
   --dest PATH  Install path (default: ~/.local/bin/xcodex).
 EOF
 }
@@ -47,14 +48,13 @@ done
 ROOT_DIR="$(realpath "$(dirname "$0")/..")"
 CODEX_RS_DIR="$ROOT_DIR/codex-rs"
 
-BUILD_ARGS=()
-if [ "$PROFILE" = "release" ]; then
-    BUILD_ARGS+=(--release)
-fi
-
 (
     cd "$CODEX_RS_DIR"
-    cargo build -p codex-cli --bin codex "${BUILD_ARGS[@]}"
+    if [ "$PROFILE" = "release" ]; then
+        cargo build -p codex-cli --bin codex --release
+    else
+        cargo build -p codex-cli --bin codex
+    fi
 )
 
 BIN="$CODEX_RS_DIR/target/$PROFILE/codex"

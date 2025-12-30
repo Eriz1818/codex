@@ -1,5 +1,12 @@
 # xcodex (xtreme-codex) is an effort to add features to upstream Codex CLI
+
 ---
+
+## Status / stability
+
+This is a fast-moving fork. Some features are experimental, may be incomplete, and can be temporarily broken. Expect rough edges, churn, and occasional behavior changes.
+
+When filing issues, include repro steps and attach the files printed by `/feedback`.
 
 ## Highlights
 
@@ -7,17 +14,43 @@
 
 - Keep context under control with `/compact` and `/autocompact` (see [`docs/xcodex/compact.md`](docs/xcodex/compact.md)).
 - Hide/show agent thoughts in the TUI with `/thoughts` (see [`docs/xcodex/thoughts.md`](docs/xcodex/thoughts.md)).
-- Automate Codex with hooks (turn-complete + approval-requested; see [`docs/xcodex/hooks.md`](docs/xcodex/hooks.md)).
+- Automate Codex with hooks (includes session/model/tool lifecycle events; see [`docs/xcodex/hooks.md`](docs/xcodex/hooks.md)).
 - Manage background terminals with `/ps` (list) and `/ps-kill` (terminate) (see [`docs/xcodex/background-terminals.md`](docs/xcodex/background-terminals.md)).
-- More features are in progress; expect rough edges and some churn.
+- Confirm-on-exit while hooks are running (toggle with `tui.confirm_exit_with_running_hooks`).
 
 ## Quickstart
 
-This fork does not use the upstream npm/Homebrew installation flow. Build from source using the instructions in `docs/install.md`, then run the resulting `codex` binary.
+This fork does not use the upstream npm/Homebrew installation flow.
+
+### Install (build from source)
+
+See [`docs/install.md`](docs/install.md) for full requirements; the shortest path is:
+
+```bash
+# from repo root
+cargo install just
+
+# builds codex-rs and installs the CLI as `xcodex` (default: ~/.local/bin/xcodex)
+cd codex-rs
+just xcodex-install --release
+
+xcodex --version
+xcodex
+```
+
+If you prefer not to use `just`, run:
+
+```bash
+scripts/install-xcodex.sh --release
+```
 
 ### Model Context Protocol (MCP)
 
 Codex can access MCP servers. To configure them, refer to the [config docs](./docs/config.md#mcp_servers).
+
+### Hooks (automation)
+
+Hooks can receive event payloads containing metadata like `cwd`, and may include truncated tool output previews. Treat hook payloads/logs as potentially sensitive.
 
 ### Configuration
 

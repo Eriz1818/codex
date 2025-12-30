@@ -353,7 +353,7 @@ impl App {
             is_first_run: false,
         };
         self.chat_widget =
-            crate::chatwidget::ChatWidget::new_from_existing(init, conv, session_configured);
+            crate::chatwidget::ChatWidget::new_from_existing(init, conv, session_configured, true);
         self.current_model = model_family.get_model_slug().to_string();
         // Trim transcript up to the selected user message and re-render it.
         self.trim_transcript_for_backtrack(nth_user_message);

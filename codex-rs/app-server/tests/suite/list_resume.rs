@@ -208,8 +208,13 @@ async fn test_list_and_resume_conversations() -> Result<()> {
     let session_initial_messages = session_initial_messages
         .expect("expected initial messages when resuming from rollout path");
     match session_initial_messages.as_slice() {
-        [EventMsg::UserMessage(message)] => {
+        [EventMsg::UserMessage(message), rest @ ..] => {
             assert_eq!(message.message, first_item.preview.clone());
+            assert!(
+                rest.iter()
+                    .all(|msg| matches!(msg, EventMsg::TokenCount(_))),
+                "unexpected non-token-count initial messages from rollout resume: {rest:#?}"
+            );
         }
         other => panic!("unexpected initial messages from rollout resume: {other:#?}"),
     }
@@ -232,8 +237,13 @@ async fn test_list_and_resume_conversations() -> Result<()> {
     let response_initial_messages =
         response_initial_messages.expect("expected initial messages in resume response");
     match response_initial_messages.as_slice() {
-        [EventMsg::UserMessage(message)] => {
+        [EventMsg::UserMessage(message), rest @ ..] => {
             assert_eq!(message.message, first_item.preview.clone());
+            assert!(
+                rest.iter()
+                    .all(|msg| matches!(msg, EventMsg::TokenCount(_))),
+                "unexpected non-token-count initial messages in resume response: {rest:#?}"
+            );
         }
         other => panic!("unexpected initial messages in resume response: {other:#?}"),
     }
@@ -270,8 +280,13 @@ async fn test_list_and_resume_conversations() -> Result<()> {
     let session_initial_messages = session_initial_messages
         .expect("expected initial messages when resuming from conversation id");
     match session_initial_messages.as_slice() {
-        [EventMsg::UserMessage(message)] => {
+        [EventMsg::UserMessage(message), rest @ ..] => {
             assert_eq!(message.message, first_item.preview.clone());
+            assert!(
+                rest.iter()
+                    .all(|msg| matches!(msg, EventMsg::TokenCount(_))),
+                "unexpected non-token-count initial messages from conversation id resume: {rest:#?}"
+            );
         }
         other => panic!("unexpected initial messages from conversation id resume: {other:#?}"),
     }
@@ -291,8 +306,13 @@ async fn test_list_and_resume_conversations() -> Result<()> {
     let by_id_initial_messages = by_id_initial_messages
         .expect("expected initial messages when resuming from conversation id response");
     match by_id_initial_messages.as_slice() {
-        [EventMsg::UserMessage(message)] => {
+        [EventMsg::UserMessage(message), rest @ ..] => {
             assert_eq!(message.message, first_item.preview.clone());
+            assert!(
+                rest.iter()
+                    .all(|msg| matches!(msg, EventMsg::TokenCount(_))),
+                "unexpected non-token-count initial messages in conversation id resume response: {rest:#?}"
+            );
         }
         other => {
             panic!("unexpected initial messages in conversation id resume response: {other:#?}")

@@ -316,7 +316,6 @@ impl BottomPane {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn ctrl_c_quit_hint_visible(&self) -> bool {
         self.ctrl_c_quit_hint
     }

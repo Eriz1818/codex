@@ -499,6 +499,16 @@ pub struct ApplyPatchFileUpdate {
     content: String,
 }
 
+impl ApplyPatchFileUpdate {
+    pub fn unified_diff(&self) -> &str {
+        &self.unified_diff
+    }
+
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+}
+
 pub fn unified_diff_from_chunks(
     path: &Path,
     chunks: &[UpdateFileChunk],

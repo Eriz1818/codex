@@ -6,6 +6,8 @@
 //! `SandboxAttempt` with a minimal environment.
 use crate::CODEX_APPLY_PATCH_ARG1;
 use crate::exec::ExecToolCallOutput;
+use crate::exec::StreamOutput;
+use crate::protocol::SandboxPolicy;
 use crate::sandboxing::CommandSpec;
 use crate::sandboxing::SandboxPermissions;
 use crate::sandboxing::execute_env;
@@ -23,6 +25,7 @@ use codex_protocol::protocol::ReviewDecision;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct ApplyPatchRequest {
@@ -45,6 +48,153 @@ pub(crate) struct ApprovalKey {
 impl ApplyPatchRuntime {
     pub fn new() -> Self {
         Self
+    }
+
+    fn apply_patch_in_process(req: &ApplyPatchRequest) -> ExecToolCallOutput {
+        let start = Instant::now();
+        let parsed = match codex_apply_patch::parse_patch(&req.patch) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                let message = format!("apply_patch parse failed: {err}\n");
+                return Self::error_output(start.elapsed(), message);
+            }
+        };
+
+        if parsed.hunks.is_empty() {
+            return Self::error_output(start.elapsed(), "No files were modified.\n".to_string());
+        }
+
+        let mut added: Vec<PathBuf> = Vec::new();
+        let mut modified: Vec<PathBuf> = Vec::new();
+        let mut deleted: Vec<PathBuf> = Vec::new();
+
+        for hunk in parsed.hunks {
+            match hunk {
+                codex_apply_patch::Hunk::AddFile { path, contents } => {
+                    let abs = req.cwd.join(&path);
+                    if let Some(parent) = abs.parent()
+                        && !parent.as_os_str().is_empty()
+                    {
+                        if let Err(err) = std::fs::create_dir_all(parent) {
+                            let display = path.display();
+                            return Self::error_output(
+                                start.elapsed(),
+                                format!(
+                                    "Failed to create parent directories for {display}: {err}\n"
+                                ),
+                            );
+                        }
+                    }
+                    if let Err(err) = std::fs::write(&abs, contents) {
+                        let display = path.display();
+                        return Self::error_output(
+                            start.elapsed(),
+                            format!("Failed to write file {display}: {err}\n"),
+                        );
+                    }
+                    added.push(path);
+                }
+                codex_apply_patch::Hunk::DeleteFile { path } => {
+                    let abs = req.cwd.join(&path);
+                    if let Err(err) = std::fs::remove_file(&abs) {
+                        let display = path.display();
+                        return Self::error_output(
+                            start.elapsed(),
+                            format!("Failed to delete file {display}: {err}\n"),
+                        );
+                    }
+                    deleted.push(path);
+                }
+                codex_apply_patch::Hunk::UpdateFile {
+                    path,
+                    move_path,
+                    chunks,
+                } => {
+                    let abs = req.cwd.join(&path);
+                    let update = match codex_apply_patch::unified_diff_from_chunks(&abs, &chunks) {
+                        Ok(update) => update,
+                        Err(err) => {
+                            let abs_display = abs.display().to_string();
+                            let rel_display = path.display().to_string();
+                            let message = err.to_string().replace(&abs_display, &rel_display);
+                            return Self::error_output(start.elapsed(), format!("{message}\n"));
+                        }
+                    };
+                    if let Some(dest) = move_path {
+                        let abs_dest = req.cwd.join(&dest);
+                        if let Some(parent) = abs_dest.parent()
+                            && !parent.as_os_str().is_empty()
+                        {
+                            if let Err(err) = std::fs::create_dir_all(parent) {
+                                let display = dest.display();
+                                return Self::error_output(
+                                    start.elapsed(),
+                                    format!(
+                                        "Failed to create parent directories for {display}: {err}\n"
+                                    ),
+                                );
+                            }
+                        }
+                        if let Err(err) = std::fs::write(&abs_dest, update.content()) {
+                            let display = dest.display();
+                            return Self::error_output(
+                                start.elapsed(),
+                                format!("Failed to write file {display}: {err}\n"),
+                            );
+                        }
+                        if let Err(err) = std::fs::remove_file(&abs) {
+                            let display = path.display();
+                            return Self::error_output(
+                                start.elapsed(),
+                                format!("Failed to remove original {display}: {err}\n"),
+                            );
+                        }
+                        modified.push(dest);
+                    } else {
+                        if let Err(err) = std::fs::write(&abs, update.content()) {
+                            let display = path.display();
+                            return Self::error_output(
+                                start.elapsed(),
+                                format!("Failed to write file {display}: {err}\n"),
+                            );
+                        }
+                        modified.push(path);
+                    }
+                }
+            }
+        }
+
+        let mut stdout = String::new();
+        stdout.push_str("Success. Updated the following files:\n");
+        for path in &added {
+            stdout.push_str(&format!("A {}\n", path.display()));
+        }
+        for path in &modified {
+            stdout.push_str(&format!("M {}\n", path.display()));
+        }
+        for path in &deleted {
+            stdout.push_str(&format!("D {}\n", path.display()));
+        }
+
+        ExecToolCallOutput {
+            exit_code: 0,
+            stdout: StreamOutput::new(stdout.clone()),
+            stderr: StreamOutput::new(String::new()),
+            aggregated_output: StreamOutput::new(stdout),
+            duration: start.elapsed(),
+            timed_out: false,
+        }
+    }
+
+    fn error_output(duration: std::time::Duration, stderr: String) -> ExecToolCallOutput {
+        ExecToolCallOutput {
+            exit_code: 1,
+            stdout: StreamOutput::new(String::new()),
+            stderr: StreamOutput::new(stderr.clone()),
+            aggregated_output: StreamOutput::new(stderr),
+            duration,
+            timed_out: false,
+        }
     }
 
     fn build_command_spec(req: &ApplyPatchRequest) -> Result<CommandSpec, ToolError> {
@@ -143,6 +293,12 @@ impl ToolRuntime<ApplyPatchRequest, ExecToolCallOutput> for ApplyPatchRuntime {
         attempt: &SandboxAttempt<'_>,
         ctx: &ToolCtx<'_>,
     ) -> Result<ExecToolCallOutput, ToolError> {
+        if attempt.sandbox == crate::exec::SandboxType::None
+            && matches!(attempt.policy, SandboxPolicy::DangerFullAccess)
+        {
+            return Ok(Self::apply_patch_in_process(req));
+        }
+
         let spec = Self::build_command_spec(req)?;
         let env = attempt
             .env_for(spec)
@@ -151,5 +307,87 @@ impl ToolRuntime<ApplyPatchRequest, ExecToolCallOutput> for ApplyPatchRuntime {
             .await
             .map_err(ToolError::Codex)?;
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn apply_patch_in_process_rejects_empty_patch() {
+        let dir = tempdir().expect("tempdir");
+        let req = ApplyPatchRequest {
+            patch: "*** Begin Patch\n*** End Patch".to_string(),
+            cwd: dir.path().to_path_buf(),
+            timeout_ms: None,
+            user_explicitly_approved: true,
+            codex_exe: None,
+        };
+
+        let out = ApplyPatchRuntime::apply_patch_in_process(&req);
+
+        assert_eq!(out.exit_code, 1);
+        assert_eq!(out.stdout.text, "");
+        assert_eq!(out.stderr.text, "No files were modified.\n");
+    }
+
+    #[test]
+    fn apply_patch_in_process_avoids_absolute_paths_in_errors() {
+        let dir = tempdir().expect("tempdir");
+        let req = ApplyPatchRequest {
+            patch: "*** Begin Patch\n*** Update File: missing.txt\n@@\n-old\n+new\n*** End Patch"
+                .to_string(),
+            cwd: dir.path().to_path_buf(),
+            timeout_ms: None,
+            user_explicitly_approved: true,
+            codex_exe: None,
+        };
+
+        let out = ApplyPatchRuntime::apply_patch_in_process(&req);
+
+        assert_eq!(out.exit_code, 1);
+        assert!(
+            out.stderr.text.contains("missing.txt"),
+            "expected missing file name in stderr, got {:?}",
+            out.stderr.text
+        );
+        assert!(
+            !out.stderr.text.contains(&dir.path().display().to_string()),
+            "expected stderr to avoid absolute cwd, got {:?}",
+            out.stderr.text
+        );
+    }
+
+    #[test]
+    fn apply_patch_in_process_updates_files_and_reports_summary() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("update.txt");
+        fs::write(&path, "foo\nbar\n").expect("seed file");
+        let req = ApplyPatchRequest {
+            patch: "*** Begin Patch\n*** Update File: update.txt\n@@\n-bar\n+baz\n*** End Patch"
+                .to_string(),
+            cwd: dir.path().to_path_buf(),
+            timeout_ms: None,
+            user_explicitly_approved: true,
+            codex_exe: None,
+        };
+
+        let out = ApplyPatchRuntime::apply_patch_in_process(&req);
+
+        assert_eq!(out.exit_code, 0);
+        assert_eq!(
+            out.stdout.text,
+            "Success. Updated the following files:\nM update.txt\n"
+        );
+        assert_eq!(
+            fs::read_to_string(path).expect("read updated file"),
+            "foo\nbaz\n"
+        );
     }
 }

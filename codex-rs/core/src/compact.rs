@@ -118,7 +118,9 @@ async fn run_compact_task_inner(
             Err(CodexErr::Interrupted) => {
                 return;
             }
-            Err(e @ CodexErr::ContextWindowExceeded) => {
+            Err(
+                e @ (CodexErr::ContextWindowExceeded | CodexErr::ProviderContextWindowExceeded(_)),
+            ) => {
                 if turn_input.len() > 1 {
                     // Trim from the beginning to preserve cache (prefix-based) and keep recent messages intact.
                     error!(
@@ -135,6 +137,12 @@ async fn run_compact_task_inner(
                 return;
             }
             Err(e) => {
+                if !matches!(e, CodexErr::Stream(_, _)) {
+                    let event = EventMsg::Error(e.to_error_event(None));
+                    sess.send_event(&turn_context, event).await;
+                    return;
+                }
+
                 if retries < max_retries {
                     retries += 1;
                     let delay = backoff(retries);

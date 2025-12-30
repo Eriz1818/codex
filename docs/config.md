@@ -779,6 +779,16 @@ Supported events:
 
 - `agent-turn-complete`
 - `approval-requested` (with `"kind"` set to `"exec"`, `"apply-patch"`, or `"elicitation"`)
+- `session-start`
+- `session-end`
+- `model-request-started`
+- `model-response-completed`
+- `tool-call-started`
+- `tool-call-finished`
+
+Note: `tool-call-started` is emitted when the tool call is dispatched; `duration-ms` in `tool-call-finished` includes any time spent queued behind non-parallel tool calls.
+
+In the interactive TUI, quitting while hooks are still running prompts for confirmation by default. Toggle with `tui.confirm_exit_with_running_hooks`.
 
 If `notify` is configured, Codex emits a deprecation notice and ignores it; migrate to `hooks.agent_turn_complete`.
 
@@ -1042,9 +1052,16 @@ Valid values:
 | `notify`                                         | array<string>                                                     | Deprecated (xcodex): ignored; use `hooks.agent_turn_complete`.                                                                  |
 | `hooks.agent_turn_complete`                      | array<array<string>>                                              | External programs to spawn after each completed turn.                                                                           |
 | `hooks.approval_requested`                       | array<array<string>>                                              | External programs to spawn when Codex requests approvals (exec/apply_patch/MCP elicitation).                                     |
+| `hooks.session_start`                            | array<array<string>>                                              | External programs to spawn when a session starts (after `SessionConfigured`).                                                   |
+| `hooks.session_end`                              | array<array<string>>                                              | External programs to spawn when a session ends (best-effort during shutdown).                                                   |
+| `hooks.model_request_started`                    | array<array<string>>                                              | External programs to spawn immediately before issuing a model request.                                                           |
+| `hooks.model_response_completed`                 | array<array<string>>                                              | External programs to spawn after a model response completes.                                                                    |
+| `hooks.tool_call_started`                        | array<array<string>>                                              | External programs to spawn when a tool call begins execution.                                                                   |
+| `hooks.tool_call_finished`                       | array<array<string>>                                              | External programs to spawn when a tool call finishes (success/failure/aborted).                                                 |
 | `hooks.max_stdin_payload_bytes`                  | integer                                                           | Max payload size (bytes) to send directly via stdin (default: 16384); above this uses `payload-path` file delivery.             |
 | `hooks.keep_last_n_payloads`                     | integer                                                           | Keep only the most recent N payload/log files under CODEX_HOME (default: 50).                                                   |
 | `tui.animations`                                 | boolean                                                           | Enable terminal animations (welcome screen, shimmer, spinner). Defaults to true; set to `false` to disable visual motion.       |
+| `tui.confirm_exit_with_running_hooks`            | boolean                                                           | Confirm exit when external hooks are still running (default: true).                                                             |
 | `instructions`                                   | string                                                            | Currently ignored; use `experimental_instructions_file` or `AGENTS.md`.                                                         |
 | `developer_instructions`                         | string                                                            | The additional developer instructions.                                                                                          |
 | `features.<feature-flag>`                        | boolean                                                           | See [feature flags](#feature-flags) for details                                                                                 |

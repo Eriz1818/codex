@@ -22,9 +22,9 @@
 //! - `session_manager.rs`: orchestration (approvals, sandboxing, reuse) and request handling.
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
 use rand::Rng;
@@ -123,23 +123,28 @@ pub(crate) struct UnifiedExecResponse {
 #[derive(Default)]
 pub(crate) struct SessionStore {
     sessions: HashMap<String, SessionEntry>,
-    reserved_sessions_id: HashSet<String>,
 }
 
 impl SessionStore {
     fn remove(&mut self, session_id: &str) -> Option<SessionEntry> {
-        self.reserved_sessions_id.remove(session_id);
         self.sessions.remove(session_id)
     }
 }
 
 pub(crate) struct UnifiedExecSessionManager {
+    next_process_id: AtomicU32,
     session_store: Mutex<SessionStore>,
 }
 
 impl Default for UnifiedExecSessionManager {
     fn default() -> Self {
+        let start = if !cfg!(test) && !cfg!(feature = "deterministic_process_ids") {
+            rand::rng().random_range(1_000..100_000)
+        } else {
+            1_000
+        };
         Self {
+            next_process_id: AtomicU32::new(start),
             session_store: Mutex::new(SessionStore::default()),
         }
     }
@@ -177,11 +182,17 @@ mod tests {
     use crate::codex::Session;
     use crate::codex::TurnContext;
     use crate::codex::make_session_and_context;
+    use crate::codex::make_session_and_context_with_rx;
     use crate::protocol::AskForApproval;
+    use crate::protocol::EventMsg;
+    use crate::protocol::ExecCommandSource;
     use crate::protocol::SandboxPolicy;
+    use crate::tools::events::ToolEmitter;
+    use crate::tools::events::ToolEventCtx;
     use crate::unified_exec::ExecCommandRequest;
     use crate::unified_exec::WriteStdinRequest;
     use core_test_support::skip_if_sandbox;
+    use pretty_assertions::assert_eq;
     use std::sync::Arc;
     use tokio::time::Duration;
 
@@ -192,6 +203,79 @@ mod tests {
         turn.approval_policy = AskForApproval::Never;
         turn.sandbox_policy = SandboxPolicy::DangerFullAccess;
         (Arc::new(session), Arc::new(turn))
+    }
+
+    #[tokio::test]
+    async fn exec_command_emits_end_event_when_session_fails_to_start() {
+        let (session, turn, rx) = make_session_and_context_with_rx().await;
+
+        let call_id = "call".to_string();
+        let process_id = session
+            .services
+            .unified_exec_manager
+            .allocate_process_id()
+            .await;
+
+        let request = ExecCommandRequest {
+            command: Vec::new(),
+            process_id: process_id.clone(),
+            yield_time_ms: 10_000,
+            max_output_tokens: None,
+            workdir: None,
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            justification: None,
+        };
+
+        let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, None);
+        let emitter = ToolEmitter::unified_exec(
+            &request.command,
+            turn.cwd.clone(),
+            ExecCommandSource::UnifiedExecStartup,
+            Some(process_id.clone()),
+        );
+        emitter.begin(event_ctx).await;
+
+        let context = UnifiedExecContext::new(Arc::clone(&session), Arc::clone(&turn), call_id);
+        assert!(
+            session
+                .services
+                .unified_exec_manager
+                .exec_command(request, &context)
+                .await
+                .is_err()
+        );
+
+        let mut begin_process_id = None;
+        let mut end_process_id = None;
+        let mut end_exit_code = None;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while tokio::time::Instant::now() < deadline {
+            let evt = tokio::time::timeout(Duration::from_millis(250), rx.recv()).await;
+            let Ok(Ok(evt)) = evt else {
+                continue;
+            };
+
+            match evt.msg {
+                EventMsg::ExecCommandBegin(ev) => {
+                    if ev.call_id == "call" {
+                        begin_process_id = ev.process_id;
+                    }
+                }
+                EventMsg::ExecCommandEnd(ev) => {
+                    if ev.call_id == "call" {
+                        end_process_id = ev.process_id;
+                        end_exit_code = Some(ev.exit_code);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(begin_process_id.as_deref(), Some(process_id.as_str()));
+        assert_eq!(end_process_id.as_deref(), Some(process_id.as_str()));
+        assert_eq!(end_exit_code, Some(-1));
     }
 
     async fn exec_command(

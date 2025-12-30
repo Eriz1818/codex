@@ -864,7 +864,7 @@ pub struct TaskStartedEvent {
     pub model_context_window: Option<i64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default, JsonSchema, TS)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Default, JsonSchema, TS)]
 pub struct TokenUsage {
     #[ts(type = "number")]
     pub input_tokens: i64,

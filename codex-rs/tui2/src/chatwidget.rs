@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use codex_app_server_protocol::AuthMode;
 use codex_backend_client::Client as BackendClient;
@@ -33,6 +34,8 @@ use codex_core::protocol::ExecCommandBeginEvent;
 use codex_core::protocol::ExecCommandEndEvent;
 use codex_core::protocol::ExecCommandSource;
 use codex_core::protocol::ExitedReviewModeEvent;
+use codex_core::protocol::HookProcessBeginEvent;
+use codex_core::protocol::HookProcessEndEvent;
 use codex_core::protocol::ListCustomPromptsResponseEvent;
 use codex_core::protocol::ListSkillsResponseEvent;
 use codex_core::protocol::McpListToolsResponseEvent;
@@ -292,6 +295,12 @@ pub(crate) struct ChatWidget {
     initial_user_message: Option<UserMessage>,
     auto_compact_enabled: bool,
     token_info: Option<TokenUsageInfo>,
+    footer_token_info: Option<TokenUsageInfo>,
+    pending_footer_token_info: Option<TokenUsageInfo>,
+    footer_token_info_at_task_start: Option<i64>,
+    context_estimate_details_visible: bool,
+    last_context_estimate_details_update: Option<Instant>,
+    last_context_estimate_details_percent: Option<i64>,
     rate_limit_snapshot: Option<RateLimitSnapshotDisplay>,
     plan_type: Option<PlanType>,
     rate_limit_warnings: RateLimitWarningState,
@@ -303,6 +312,7 @@ pub(crate) struct ChatWidget {
     suppressed_exec_calls: HashSet<String>,
     last_unified_wait: Option<UnifiedExecWaitState>,
     task_complete_pending: bool,
+    hook_processes: HashSet<String>,
     mcp_startup_status: Option<HashMap<String, McpStartupStatus>>,
     // Queue of interruptive UI events deferred during an active write cycle
     interrupts: InterruptManager,
@@ -532,6 +542,11 @@ impl ChatWidget {
         self.retry_status_header = None;
         self.bottom_pane.set_interrupt_hint_visible(true);
         self.set_status_header(String::from("Working"));
+        self.footer_token_info_at_task_start = self
+            .footer_token_info
+            .as_ref()
+            .map(|info| info.last_token_usage.total_tokens);
+        self.pending_footer_token_info = None;
         self.full_reasoning_buffer.clear();
         self.reasoning_buffer.clear();
         self.request_redraw();
@@ -542,6 +557,7 @@ impl ChatWidget {
         self.flush_answer_stream_with_separator();
         // Mark task stopped and request redraw now that all content is in history.
         self.bottom_pane.set_task_running(false);
+        self.apply_pending_footer_token_info_if_needed();
         self.running_commands.clear();
         self.suppressed_exec_calls.clear();
         self.last_unified_wait = None;
@@ -563,15 +579,117 @@ impl ChatWidget {
             None => {
                 self.bottom_pane.set_context_window(None, None);
                 self.token_info = None;
+                self.footer_token_info = None;
+                self.pending_footer_token_info = None;
+                self.footer_token_info_at_task_start = None;
+                self.context_estimate_details_visible = false;
+                self.last_context_estimate_details_update = None;
+                self.last_context_estimate_details_percent = None;
             }
         }
     }
 
+    fn apply_pending_footer_token_info_if_needed(&mut self) {
+        let Some(pending) = self.pending_footer_token_info.take() else {
+            self.footer_token_info_at_task_start = None;
+            return;
+        };
+
+        let footer_tokens = self
+            .footer_token_info
+            .as_ref()
+            .map(|info| info.last_token_usage.total_tokens);
+        if footer_tokens == self.footer_token_info_at_task_start {
+            self.apply_footer_token_info(Some(pending));
+        }
+
+        self.footer_token_info_at_task_start = None;
+    }
+
+    fn clear_context_estimate_details_if_visible(&mut self) {
+        if self.context_estimate_details_visible && self.current_status_header == "Working" {
+            self.context_estimate_details_visible = false;
+            self.last_context_estimate_details_update = None;
+            self.last_context_estimate_details_percent = None;
+            self.set_status(self.current_status_header.clone(), None);
+        }
+    }
+
+    fn maybe_update_context_estimate_details(&mut self, info: &TokenUsageInfo) {
+        if self.current_status_header != "Working" {
+            return;
+        }
+
+        let percent = self.context_remaining_percent(info);
+        if matches!(percent, Some(0)) {
+            self.clear_context_estimate_details_if_visible();
+            return;
+        }
+
+        let now = Instant::now();
+        if let Some(last) = self.last_context_estimate_details_update
+            && now.duration_since(last) < Duration::from_secs(2)
+            && percent == self.last_context_estimate_details_percent
+        {
+            return;
+        }
+
+        self.last_context_estimate_details_percent = percent;
+        self.last_context_estimate_details_update = Some(now);
+
+        let details = if let Some(percent) = percent {
+            format!("Est. next request: {percent}% context left")
+        } else {
+            format!(
+                "Est. next request: ~{} tokens",
+                info.last_token_usage.total_tokens
+            )
+        };
+
+        self.context_estimate_details_visible = true;
+        self.set_status(self.current_status_header.clone(), Some(details));
+    }
+
+    fn looks_like_prompt_estimate(info: &TokenUsageInfo) -> bool {
+        let last = &info.last_token_usage;
+        last.input_tokens == 0
+            && last.cached_input_tokens == 0
+            && last.output_tokens == 0
+            && last.reasoning_output_tokens == 0
+    }
+
     fn apply_token_info(&mut self, info: TokenUsageInfo) {
+        let is_estimate = Self::looks_like_prompt_estimate(&info);
+        self.token_info = Some(info.clone());
+
+        if is_estimate && self.bottom_pane.is_task_running() {
+            self.maybe_update_context_estimate_details(&info);
+        } else {
+            self.clear_context_estimate_details_if_visible();
+        }
+
+        if is_estimate && self.bottom_pane.is_task_running() && self.footer_token_info.is_some() {
+            // Avoid jarring swings (especially to 0%) while a turn is in progress.
+            // Keep showing the last known stable value until we receive real API usage.
+            self.pending_footer_token_info = Some(info);
+            return;
+        }
+
+        self.pending_footer_token_info = None;
+        self.apply_footer_token_info(Some(info));
+    }
+
+    fn apply_footer_token_info(&mut self, info: Option<TokenUsageInfo>) {
+        let Some(info) = info else {
+            self.bottom_pane.set_context_window(None, None);
+            self.footer_token_info = None;
+            return;
+        };
+
         let percent = self.context_remaining_percent(&info);
         let used_tokens = self.context_used_tokens(&info, percent.is_some());
         self.bottom_pane.set_context_window(percent, used_tokens);
-        self.token_info = Some(info);
+        self.footer_token_info = Some(info);
     }
 
     fn context_remaining_percent(&self, info: &TokenUsageInfo) -> Option<i64> {
@@ -598,6 +716,12 @@ impl ChatWidget {
                 None => {
                     self.bottom_pane.set_context_window(None, None);
                     self.token_info = None;
+                    self.footer_token_info = None;
+                    self.pending_footer_token_info = None;
+                    self.footer_token_info_at_task_start = None;
+                    self.context_estimate_details_visible = false;
+                    self.last_context_estimate_details_update = None;
+                    self.last_context_estimate_details_percent = None;
                 }
             }
         }
@@ -676,6 +800,7 @@ impl ChatWidget {
         self.finalize_active_cell_as_failed();
         // Reset running state and clear streaming buffers.
         self.bottom_pane.set_task_running(false);
+        self.apply_pending_footer_token_info_if_needed();
         self.running_commands.clear();
         self.suppressed_exec_calls.clear();
         self.last_unified_wait = None;
@@ -851,6 +976,14 @@ impl ChatWidget {
 
     fn on_terminal_interaction(&mut self, _ev: TerminalInteractionEvent) {
         // TODO: Handle once design is ready
+    }
+
+    fn on_hook_process_begin(&mut self, ev: HookProcessBeginEvent) {
+        self.hook_processes.insert(ev.hook_id.to_string());
+    }
+
+    fn on_hook_process_end(&mut self, ev: HookProcessEndEvent) {
+        self.hook_processes.remove(&ev.hook_id.to_string());
     }
 
     fn on_patch_apply_begin(&mut self, event: PatchApplyBeginEvent) {
@@ -1319,6 +1452,12 @@ impl ChatWidget {
             ),
             auto_compact_enabled,
             token_info: None,
+            footer_token_info: None,
+            pending_footer_token_info: None,
+            footer_token_info_at_task_start: None,
+            context_estimate_details_visible: false,
+            last_context_estimate_details_update: None,
+            last_context_estimate_details_percent: None,
             rate_limit_snapshot: None,
             plan_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
@@ -1329,6 +1468,7 @@ impl ChatWidget {
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
+            hook_processes: HashSet::new(),
             mcp_startup_status: None,
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
@@ -1358,6 +1498,9 @@ impl ChatWidget {
         common: ChatWidgetInit,
         conversation: std::sync::Arc<codex_core::CodexConversation>,
         session_configured: codex_core::protocol::SessionConfiguredEvent,
+        // If true, `on_session_configured` will not call `request_redraw()`.
+        // Callers should schedule a frame once the first history cell is processed.
+        suppress_session_configured_redraw: bool,
     ) -> Self {
         let ChatWidgetInit {
             config,
@@ -1407,6 +1550,12 @@ impl ChatWidget {
             ),
             auto_compact_enabled,
             token_info: None,
+            footer_token_info: None,
+            pending_footer_token_info: None,
+            footer_token_info_at_task_start: None,
+            context_estimate_details_visible: false,
+            last_context_estimate_details_update: None,
+            last_context_estimate_details_percent: None,
             rate_limit_snapshot: None,
             plan_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
@@ -1417,6 +1566,7 @@ impl ChatWidget {
             suppressed_exec_calls: HashSet::new(),
             last_unified_wait: None,
             task_complete_pending: false,
+            hook_processes: HashSet::new(),
             mcp_startup_status: None,
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
@@ -1426,7 +1576,7 @@ impl ChatWidget {
             conversation_id: None,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: false,
-            suppress_session_configured_redraw: true,
+            suppress_session_configured_redraw,
             pending_notification: None,
             is_review_mode: false,
             pre_review_token_info: None,
@@ -1910,7 +2060,9 @@ impl ChatWidget {
                 self.on_task_complete(last_agent_message)
             }
             EventMsg::TokenCount(ev) => {
-                self.set_token_info(ev.info);
+                if let Some(info) = ev.info {
+                    self.set_token_info(Some(info));
+                }
                 self.on_rate_limit_snapshot(ev.rate_limits);
             }
             EventMsg::Warning(WarningEvent { message }) => self.on_warning(message),
@@ -1941,7 +2093,8 @@ impl ChatWidget {
             }
             EventMsg::ExecCommandBegin(ev) => self.on_exec_command_begin(ev),
             EventMsg::TerminalInteraction(delta) => self.on_terminal_interaction(delta),
-            EventMsg::HookProcessBegin(_) | EventMsg::HookProcessEnd(_) => {}
+            EventMsg::HookProcessBegin(ev) => self.on_hook_process_begin(ev),
+            EventMsg::HookProcessEnd(ev) => self.on_hook_process_end(ev),
             EventMsg::ExecCommandOutputDelta(delta) => self.on_exec_command_output_delta(delta),
             EventMsg::PatchApplyBegin(ev) => self.on_patch_apply_begin(ev),
             EventMsg::PatchApplyEnd(ev) => self.on_patch_apply_end(ev),
@@ -3115,6 +3268,14 @@ impl ChatWidget {
         if self.bottom_pane.is_task_running() {
             self.bottom_pane.show_ctrl_c_quit_hint();
             self.submit_op(Op::Interrupt);
+            return;
+        }
+
+        if self.config.tui_confirm_exit_with_running_hooks
+            && !self.hook_processes.is_empty()
+            && !self.bottom_pane.ctrl_c_quit_hint_visible()
+        {
+            self.bottom_pane.show_ctrl_c_quit_hint();
             return;
         }
 

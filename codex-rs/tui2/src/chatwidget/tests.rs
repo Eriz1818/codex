@@ -27,6 +27,7 @@ use codex_core::protocol::ExecCommandSource;
 use codex_core::protocol::ExecPolicyAmendment;
 use codex_core::protocol::ExitedReviewModeEvent;
 use codex_core::protocol::FileChange;
+use codex_core::protocol::HookProcessBeginEvent;
 use codex_core::protocol::McpStartupStatus;
 use codex_core::protocol::McpStartupUpdateEvent;
 use codex_core::protocol::Op;
@@ -196,8 +197,8 @@ async fn review_restores_context_window_indicator() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(None).await;
 
     let context_window = 13_000;
-    let pre_review_tokens = 12_700; // ~30% remaining after subtracting baseline.
-    let review_tokens = 12_030; // ~97% remaining after subtracting baseline.
+    let pre_review_tokens = 12_700; // ~2% remaining.
+    let review_tokens = 12_030; // ~7% remaining.
 
     chat.handle_codex_event(Event {
         id: "token-before".into(),
@@ -206,7 +207,7 @@ async fn review_restores_context_window_indicator() {
             rate_limits: None,
         }),
     });
-    assert_eq!(chat.bottom_pane.context_window_percent(), Some(30));
+    assert_eq!(chat.bottom_pane.context_window_percent(), Some(2));
 
     chat.handle_codex_event(Event {
         id: "review-start".into(),
@@ -225,7 +226,7 @@ async fn review_restores_context_window_indicator() {
             rate_limits: None,
         }),
     });
-    assert_eq!(chat.bottom_pane.context_window_percent(), Some(97));
+    assert_eq!(chat.bottom_pane.context_window_percent(), Some(7));
 
     chat.handle_codex_event(Event {
         id: "review-end".into(),
@@ -235,13 +236,12 @@ async fn review_restores_context_window_indicator() {
     });
     let _ = drain_insert_history(&mut rx);
 
-    assert_eq!(chat.bottom_pane.context_window_percent(), Some(30));
+    assert_eq!(chat.bottom_pane.context_window_percent(), Some(2));
     assert!(!chat.is_review_mode);
 }
 
-/// Receiving a TokenCount event without usage clears the context indicator.
 #[tokio::test]
-async fn token_count_none_resets_context_indicator() {
+async fn token_count_none_does_not_reset_context_indicator() {
     let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     let context_window = 13_000;
@@ -254,16 +254,24 @@ async fn token_count_none_resets_context_indicator() {
             rate_limits: None,
         }),
     });
-    assert_eq!(chat.bottom_pane.context_window_percent(), Some(30));
+    let before = chat.bottom_pane.context_window_percent();
+    assert_eq!(before, Some(2));
 
     chat.handle_codex_event(Event {
         id: "token-cleared".into(),
         msg: EventMsg::TokenCount(TokenCountEvent {
             info: None,
-            rate_limits: None,
+            rate_limits: Some(snapshot(80.0)),
         }),
     });
-    assert_eq!(chat.bottom_pane.context_window_percent(), None);
+    assert_eq!(chat.bottom_pane.context_window_percent(), before);
+    assert_eq!(
+        chat.rate_limit_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.primary.as_ref())
+            .map(|window| window.used_percent),
+        Some(80.0)
+    );
 }
 
 #[tokio::test]
@@ -377,6 +385,12 @@ async fn make_chatwidget_manual(
         initial_user_message: None,
         auto_compact_enabled: false,
         token_info: None,
+        footer_token_info: None,
+        pending_footer_token_info: None,
+        footer_token_info_at_task_start: None,
+        context_estimate_details_visible: false,
+        last_context_estimate_details_update: None,
+        last_context_estimate_details_percent: None,
         rate_limit_snapshot: None,
         plan_type: None,
         rate_limit_warnings: RateLimitWarningState::default(),
@@ -387,6 +401,7 @@ async fn make_chatwidget_manual(
         suppressed_exec_calls: HashSet::new(),
         last_unified_wait: None,
         task_complete_pending: false,
+        hook_processes: HashSet::new(),
         mcp_startup_status: None,
         interrupts: InterruptManager::new(),
         reasoning_buffer: String::new(),
@@ -1042,6 +1057,30 @@ async fn ctrl_c_shutdown_ignores_caps_lock() {
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Char('C'), KeyModifiers::CONTROL));
 
+    match op_rx.try_recv() {
+        Ok(Op::Shutdown) => {}
+        other => panic!("expected Op::Shutdown, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn ctrl_c_shutdown_requires_confirmation_when_hooks_running() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
+    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
+
+    chat.config.tui_confirm_exit_with_running_hooks = true;
+    chat.on_hook_process_begin(HookProcessBeginEvent {
+        hook_id: uuid::Uuid::nil(),
+        payload_event_id: uuid::Uuid::nil(),
+        event_type: "agent-turn-complete".to_string(),
+        command: vec!["echo".to_string(), "hook".to_string()],
+    });
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
+    assert!(chat.bottom_pane.ctrl_c_quit_hint_visible());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
     match op_rx.try_recv() {
         Ok(Op::Shutdown) => {}
         other => panic!("expected Op::Shutdown, got {other:?}"),
