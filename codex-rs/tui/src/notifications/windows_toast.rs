@@ -5,7 +5,7 @@ use std::process::Stdio;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 
-const APP_ID: &str = "Codex";
+const APP_ID: &str = "xcodex";
 const POWERSHELL_EXE: &str = "powershell.exe";
 
 #[derive(Debug)]
@@ -67,7 +67,7 @@ $textNodes = $doc.GetElementsByTagName("text")
 $textNodes.Item(0).AppendChild($doc.CreateTextNode($titleText)) | Out-Null
 $textNodes.Item(1).AppendChild($doc.CreateTextNode($bodyText)) | Out-Null
 $toast = [Windows.UI.Notifications.ToastNotification]::new($doc)
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Codex').Show($toast)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{APP_ID}').Show($toast)
 "#,
     )
 }

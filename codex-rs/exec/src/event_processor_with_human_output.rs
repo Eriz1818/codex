@@ -134,11 +134,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
         session_configured_event: &SessionConfiguredEvent,
     ) {
         const VERSION: &str = env!("CARGO_PKG_VERSION");
-        ts_msg!(
-            self,
-            "OpenAI Codex v{} (research preview)\n--------",
-            VERSION
-        );
+        ts_msg!(self, "xtreme-Codex v{VERSION} (research preview)\n--------");
 
         let mut entries =
             create_config_summary_entries(config, session_configured_event.model.as_str());

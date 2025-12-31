@@ -2,6 +2,7 @@
 source: tui2/src/chatwidget/tests.rs
 expression: term.backend().vt100().screen().contents()
 ---
+
 • Working (0s • esc to interrupt)
   ↳ Hello, world! 0
   ↳ Hello, world! 1
@@ -22,6 +23,6 @@ expression: term.backend().vt100().screen().contents()
   ↳ Hello, world! 16
 
 
-› Ask Codex to do anything
+› Ask xcodex to do anything
 
   100% context left · ? for shortcuts

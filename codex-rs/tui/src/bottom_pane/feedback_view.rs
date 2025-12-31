@@ -350,7 +350,7 @@ fn save_feedback_note(
     note: &str,
 ) -> std::io::Result<PathBuf> {
     let dir = std::env::temp_dir();
-    let path = dir.join(format!("codex-feedback-{thread_id}.txt"));
+    let path = dir.join(format!("xcodex-feedback-{thread_id}.txt"));
     let contents = format!("thread_id={thread_id}\nclassification={classification}\n\n{note}\n");
     std::fs::write(&path, contents)?;
     Ok(path)
@@ -444,7 +444,11 @@ pub(crate) fn feedback_upload_consent_params(
         Line::from("Save logs?".bold()).into(),
         Line::from("").into(),
         Line::from("The following files will be saved locally:".dim()).into(),
-        Line::from(vec!["  • ".into(), "codex-feedback-<thread-id>.log".into()]).into(),
+        Line::from(vec![
+            "  • ".into(),
+            "xcodex-feedback-<thread-id>.log".into(),
+        ])
+        .into(),
     ];
     if let Some(path) = rollout_path.as_deref()
         && let Some(name) = path.file_name().map(|s| s.to_string_lossy().to_string())
@@ -458,7 +462,7 @@ pub(crate) fn feedback_upload_consent_params(
             super::SelectionItem {
                 name: "Yes".to_string(),
                 description: Some(
-                    "Save the current Codex session logs for troubleshooting.".to_string(),
+                    "Save the current xcodex session logs for troubleshooting.".to_string(),
                 ),
                 actions: vec![yes_action],
                 dismiss_on_select: true,

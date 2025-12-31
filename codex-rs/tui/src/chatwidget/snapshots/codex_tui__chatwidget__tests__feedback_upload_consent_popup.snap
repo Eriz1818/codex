@@ -5,9 +5,9 @@ expression: popup
   Save logs?
 
   The following files will be saved locally:
-    • codex-feedback-<thread-id>.log
+    • xcodex-feedback-<thread-id>.log
 
-› 1. Yes  Save the current Codex session logs for troubleshooting.
+› 1. Yes  Save the current xcodex session logs for troubleshooting.
   2. No
 
   Press enter to confirm or esc to go back
