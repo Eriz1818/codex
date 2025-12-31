@@ -1,0 +1,18 @@
+---
+source: tui/src/xcodex_first_run_wizard.rs
+assertion_line: 460
+expression: render_snapshot(&screen)
+---
+
+  xcodex setup (first run)
+
+  Review planned changes:
+
+    Home: XC_HOME_DOES_NOT_EXIST
+    Write: XC_HOME_DOES_NOT_EXIST/config.toml
+    Write: XC_HOME_DOES_NOT_EXIST/.xcodex-first-run-wizard.complete
+
+› 1. Exit (dry-run)
+  2. Back
+
+  Press enter to select

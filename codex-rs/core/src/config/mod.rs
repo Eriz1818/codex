@@ -1639,6 +1639,30 @@ fn default_home_dirname() -> &'static str {
     default_home_dirname_impl(is_xcodex_invocation())
 }
 
+pub fn xcodex_first_run_wizard_marker_path(codex_home: &Path) -> PathBuf {
+    codex_home.join(".xcodex-first-run-wizard.complete")
+}
+
+fn should_run_xcodex_first_run_wizard_impl(
+    codex_home: &Path,
+    is_xcodex: bool,
+) -> std::io::Result<bool> {
+    if !is_xcodex {
+        return Ok(false);
+    }
+
+    let config_toml = codex_home.join(CONFIG_TOML_FILE);
+    if config_toml.exists() {
+        return Ok(false);
+    }
+
+    Ok(!xcodex_first_run_wizard_marker_path(codex_home).exists())
+}
+
+pub fn should_run_xcodex_first_run_wizard(codex_home: &Path) -> std::io::Result<bool> {
+    should_run_xcodex_first_run_wizard_impl(codex_home, is_xcodex_invocation())
+}
+
 /// Returns the path to the Codex configuration directory, which can be
 /// specified by the `CODEX_HOME` environment variable. If not set, defaults to
 /// `~/.codex` (or `~/.xcodex` when invoked as `xcodex`).
@@ -1690,11 +1714,42 @@ mod tests {
 
     use std::time::Duration;
     use tempfile::TempDir;
+    use tempfile::tempdir;
 
     #[test]
     fn default_home_dirname_switches_for_xcodex_invocation() {
         assert_eq!(CODEX_DEFAULT_HOME_DIRNAME, default_home_dirname_impl(false));
         assert_eq!(XCODEX_DEFAULT_HOME_DIRNAME, default_home_dirname_impl(true));
+    }
+
+    #[test]
+    fn xcodex_first_run_wizard_requires_missing_config_and_marker() -> std::io::Result<()> {
+        let dir = tempdir()?;
+        let codex_home = dir.path();
+
+        assert_eq!(
+            false,
+            should_run_xcodex_first_run_wizard_impl(codex_home, false)?
+        );
+        assert_eq!(
+            true,
+            should_run_xcodex_first_run_wizard_impl(codex_home, true)?
+        );
+
+        std::fs::write(codex_home.join(CONFIG_TOML_FILE), "")?;
+        assert_eq!(
+            false,
+            should_run_xcodex_first_run_wizard_impl(codex_home, true)?
+        );
+
+        std::fs::remove_file(codex_home.join(CONFIG_TOML_FILE))?;
+        std::fs::write(xcodex_first_run_wizard_marker_path(codex_home), "")?;
+        assert_eq!(
+            false,
+            should_run_xcodex_first_run_wizard_impl(codex_home, true)?
+        );
+
+        Ok(())
     }
 
     #[test]

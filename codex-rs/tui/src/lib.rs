@@ -83,6 +83,7 @@ pub mod update_action;
 mod update_prompt;
 mod updates;
 mod version;
+mod xcodex_first_run_wizard;
 
 mod wrapping;
 
@@ -105,6 +106,29 @@ pub async fn run_main(
     mut cli: Cli,
     codex_linux_sandbox_exe: Option<PathBuf>,
 ) -> std::io::Result<AppExitInfo> {
+    if let Some(path) = cli.prompt_file.take() {
+        if path.as_os_str() == "-" {
+            eprintln!(
+                "`--file -` is not supported in the interactive TUI. Pipe the prompt into `codex exec` instead."
+            );
+            std::process::exit(1);
+        }
+
+        match std::fs::read_to_string(&path) {
+            Ok(prompt) => {
+                if prompt.trim().is_empty() {
+                    eprintln!("Prompt file {} is empty.", path.display());
+                    std::process::exit(1);
+                }
+                cli.prompt = Some(prompt);
+            }
+            Err(err) => {
+                eprintln!("Failed to read prompt file {}: {err}", path.display());
+                std::process::exit(1);
+            }
+        }
+    }
+
     let (sandbox_mode, approval_policy) = if cli.full_auto {
         (
             Some(SandboxMode::WorkspaceWrite),
@@ -362,6 +386,20 @@ async fn run_ratatui_app(
     terminal.clear()?;
 
     let mut tui = Tui::new(terminal);
+    let mut initial_config = initial_config;
+
+    match xcodex_first_run_wizard::run_xcodex_first_run_wizard_if_needed(
+        &mut tui,
+        &cli,
+        &initial_config,
+    )
+    .await?
+    {
+        xcodex_first_run_wizard::WizardOutcome::Continue => {}
+        xcodex_first_run_wizard::WizardOutcome::ReloadConfig => {
+            initial_config = load_config_or_exit(cli_kv_overrides.clone(), overrides.clone()).await;
+        }
+    }
 
     #[cfg(not(debug_assertions))]
     {

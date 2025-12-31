@@ -11,6 +11,10 @@ pub struct Cli {
     #[arg(value_name = "PROMPT", value_hint = clap::ValueHint::Other)]
     pub prompt: Option<String>,
 
+    /// Read the initial prompt from a file (useful for large prompts).
+    #[arg(long = "file", value_name = "FILE", value_hint = ValueHint::FilePath, conflicts_with = "prompt")]
+    pub prompt_file: Option<PathBuf>,
+
     /// Optional image(s) to attach to the initial prompt.
     #[arg(long = "image", short = 'i', value_name = "FILE", value_delimiter = ',', num_args = 1..)]
     pub images: Vec<PathBuf>,
@@ -85,6 +89,14 @@ pub struct Cli {
     #[arg(long = "add-dir", value_name = "DIR", value_hint = ValueHint::DirPath)]
     pub add_dir: Vec<PathBuf>,
 
+    /// Internal: force showing the xcodex first-run setup wizard on startup.
+    #[arg(long = "force-setup-wizard", hide = true, default_value_t = false)]
+    pub force_setup_wizard: bool,
+
+    /// Internal: run the setup wizard UI but do not write any changes.
+    #[arg(long = "setup-dry-run", hide = true, default_value_t = false)]
+    pub setup_dry_run: bool,
+
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
@@ -93,6 +105,7 @@ impl From<codex_tui::Cli> for Cli {
     fn from(cli: codex_tui::Cli) -> Self {
         Self {
             prompt: cli.prompt,
+            prompt_file: cli.prompt_file,
             images: cli.images,
             resume_picker: cli.resume_picker,
             resume_last: cli.resume_last,
@@ -109,6 +122,8 @@ impl From<codex_tui::Cli> for Cli {
             cwd: cli.cwd,
             web_search: cli.web_search,
             add_dir: cli.add_dir,
+            force_setup_wizard: cli.force_setup_wizard,
+            setup_dry_run: cli.setup_dry_run,
             config_overrides: cli.config_overrides,
         }
     }

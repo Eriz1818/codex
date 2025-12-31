@@ -1,0 +1,17 @@
+---
+source: tui2/src/xcodex_first_run_wizard.rs
+assertion_line: 453
+expression: render_snapshot(&screen)
+---
+
+  xcodex setup (first run)
+
+  xcodex keeps its config/state separate by default so it can coexist with upstr
+
+  Home: XC_HOME_DOES_NOT_EXIST
+
+› 1. Start fresh (review changes)
+  2. Skip for now
+  3. Don’t show again
+
+  Press enter to continue
