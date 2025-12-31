@@ -1,4 +1,12 @@
-# xcodex (xtreme-codex) is an effort to add features to upstream Codex CLI
+# xCodex (xtreme-Codex)
+
+`xCodex` (short for “xtreme-Codex”) is an independent fork of OpenAI’s Codex CLI.
+
+- Repo: `xCodex`
+- Binary: `xcodex`
+- Upstream: https://github.com/openai/codex
+
+`xCodex` is not affiliated with, endorsed by, or supported by OpenAI.
 
 ---
 
@@ -10,7 +18,7 @@ When filing issues, include repro steps and attach the files printed by `/feedba
 
 ## Highlights
 
-**New in this fork**
+**New in xCodex**
 
 - Keep context under control with `/compact` and `/autocompact` (see [`docs/xcodex/compact.md`](docs/xcodex/compact.md)).
 - Hide/show agent thoughts in the TUI with `/thoughts` (see [`docs/xcodex/thoughts.md`](docs/xcodex/thoughts.md)).
@@ -113,6 +121,14 @@ See the [Execpolicy quickstart](./docs/execpolicy.md) to set up rules that gover
 
 ---
 
-## License
+## Support
+
+For `xCodex` issues/bugs/feature requests, please use this repository’s issue tracker (not upstream).
+
+---
+
+## License & attribution
 
 This repository is licensed under the [Apache-2.0 License](LICENSE).
+
+See [NOTICE](NOTICE) for upstream attribution and third-party notices. OpenAI and Codex are trademarks of their respective owners.
