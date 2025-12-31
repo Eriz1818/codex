@@ -8,7 +8,7 @@ This document is an overview; the authoritative reference is `docs/config.md#hoo
 
 Notes on naming:
 
-- This fork installs the binary as `xcodex`, but help/usage strings use `codex`.
+- This fork installs the binary as `xcodex`.
 - Config keys are snake_case (e.g. `hooks.session_start`); payload `"type"` is kebab-case (e.g. `session-start`).
 
 ## What you need to use hooks
@@ -21,8 +21,8 @@ No additional commands are required.
 If you want to disable all external hooks for a single run, pass `--no-hooks`:
 
 ```sh
-codex --no-hooks
-codex exec --no-hooks "…"
+xcodex --no-hooks
+xcodex exec --no-hooks "…"
 ```
 
 In the interactive TUI, quitting while hooks are still running prompts for confirmation by default. Toggle with `tui.confirm_exit_with_running_hooks`.
@@ -32,7 +32,7 @@ In the interactive TUI, quitting while hooks are still running prompts for confi
 To exercise your configured hook commands without running a full session, use:
 
 ```sh
-codex hooks test
+xcodex hooks test
 ```
 
 This invokes your configured hook command(s) with synthetic payloads for the supported event types and prints a short summary (including where hook logs and payload files were written under `CODEX_HOME`).
@@ -200,7 +200,7 @@ To get users using hooks with minimal effort, we could add:
 
 ## Avoiding recursion
 
-If a hook script runs `codex exec` (for example to do background processing after a turn completes), use `codex exec --no-hooks ...` so the child run does not re-trigger hooks.
+If a hook script runs `xcodex exec` (for example to do background processing after a turn completes), use `xcodex exec --no-hooks ...` so the child run does not re-trigger hooks.
 
 ## Related docs
 
