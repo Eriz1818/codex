@@ -42,6 +42,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::should_run_xcodex_first_run_wizard;
 use codex_core::features::Feature;
 use codex_core::features::FeatureOverrides;
 use codex_core::features::Features;
@@ -538,6 +539,13 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                     &mut exec_cli.config_overrides,
                     root_config_overrides.clone(),
                 );
+                let codex_home = find_codex_home()?;
+                if should_run_xcodex_first_run_wizard(&codex_home)? {
+                    anyhow::bail!(
+                        "xcodex first-run setup required: run `xcodex` once to initialize {} (or set CODEX_HOME to an initialized directory)",
+                        codex_home.display()
+                    );
+                }
                 codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
                 return Ok(());
             }
@@ -554,6 +562,13 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            let codex_home = find_codex_home()?;
+            if should_run_xcodex_first_run_wizard(&codex_home)? {
+                anyhow::bail!(
+                    "xcodex first-run setup required: run `xcodex` once to initialize {} (or set CODEX_HOME to an initialized directory)",
+                    codex_home.display()
+                );
+            }
             codex_exec::run_main(exec_cli, codex_linux_sandbox_exe).await?;
         }
         Some(Subcommand::Review(review_args)) => {
