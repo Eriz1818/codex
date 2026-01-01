@@ -15,8 +15,14 @@ Notes on naming:
 
 No additional commands are required.
 
-1. Ensure you have a `~/.codex/config.toml`
+1. Ensure you have a `$CODEX_HOME/config.toml` (for `xcodex` with no `CODEX_HOME`, this is `~/.xcodex/config.toml`)
 2. Add a `[hooks]` section (examples below)
+
+Notes:
+
+- Hooks are configured in your active Codex home (`$CODEX_HOME/config.toml`).
+- `xcodex` uses `$CODEX_HOME` too. When `CODEX_HOME` is unset, `xcodex` defaults to `~/.xcodex` (and upstream `codex` defaults to `~/.codex`), so hooks you configure via xcodex won’t affect upstream codex by default.
+- If you *want* to share hooks/config with upstream codex, explicitly set `CODEX_HOME=~/.codex` before running `xcodex`.
 
 If you want to disable all external hooks for a single run, pass `--no-hooks`:
 
@@ -73,14 +79,16 @@ Notes:
 
 Hooks are configured as argv arrays:
 
+Note: hook command paths are treated as literal argv entries (no shell expansion), so prefer absolute paths.
+
 ```toml
 [hooks]
 agent_turn_complete = [
-  ["python3", "/path/to/.codex/hooks/turn_complete.py"],
+  ["python3", "/Users/alice/.xcodex/hooks/turn_complete.py"],
 ]
 
 approval_requested = [
-  ["python3", "/path/to/.codex/hooks/approval.py"],
+  ["python3", "/Users/alice/.xcodex/hooks/approval.py"],
 ]
 ```
 
@@ -118,11 +126,12 @@ keep_last_n_payloads = 50
 
 ## Example: log turn summaries to a file
 
-Create `~/.codex/hooks/turn_complete.py`:
+Create `$CODEX_HOME/hooks/turn_complete.py`:
 
 ```python
 #!/usr/bin/env python3
 import json
+import os
 import pathlib
 import sys
 
@@ -131,22 +140,23 @@ payload = json.loads(stdin_payload)
 payload_path = payload.get("payload-path")
 if payload_path:
     payload = json.loads(pathlib.Path(payload_path).read_text())
-out = pathlib.Path.home() / ".codex" / "hooks.log"
+out = pathlib.Path(os.environ["CODEX_HOME"]) / "hooks.log"
 out.parent.mkdir(parents=True, exist_ok=True)
 
 line = f"{payload.get('type')} cwd={payload.get('cwd')} last={payload.get('last-assistant-message')!r}\n"
 out.write_text(out.read_text() + line if out.exists() else line)
 ```
 
-Then wire it up in `~/.codex/config.toml` as shown above.
+Then wire it up in `$CODEX_HOME/config.toml` as shown above.
 
 ## Example: log all hook payloads (JSONL)
 
-Create `~/.codex/hooks/log_all.py`:
+Create `$CODEX_HOME/hooks/log_all.py`:
 
 ```python
 #!/usr/bin/env python3
 import json
+import os
 import pathlib
 import sys
 
@@ -155,7 +165,7 @@ payload_path = payload.get("payload-path")
 if payload_path:
     payload = json.loads(pathlib.Path(payload_path).read_text())
 
-out = pathlib.Path.home() / ".codex" / "hooks.jsonl"
+out = pathlib.Path(os.environ["CODEX_HOME"]) / "hooks.jsonl"
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text((out.read_text() if out.exists() else "") + json.dumps(payload) + "\n")
 ```
@@ -164,14 +174,14 @@ Then configure:
 
 ```toml
 [hooks]
-session_start = [["python3", "/Users/alice/.codex/hooks/log_all.py"]]
-session_end = [["python3", "/Users/alice/.codex/hooks/log_all.py"]]
-model_request_started = [["python3", "/Users/alice/.codex/hooks/log_all.py"]]
-model_response_completed = [["python3", "/Users/alice/.codex/hooks/log_all.py"]]
-tool_call_started = [["python3", "/Users/alice/.codex/hooks/log_all.py"]]
-tool_call_finished = [["python3", "/Users/alice/.codex/hooks/log_all.py"]]
-agent_turn_complete = [["python3", "/Users/alice/.codex/hooks/log_all.py"]]
-approval_requested = [["python3", "/Users/alice/.codex/hooks/log_all.py"]]
+session_start = [["python3", "/Users/alice/.xcodex/hooks/log_all.py"]]
+session_end = [["python3", "/Users/alice/.xcodex/hooks/log_all.py"]]
+model_request_started = [["python3", "/Users/alice/.xcodex/hooks/log_all.py"]]
+model_response_completed = [["python3", "/Users/alice/.xcodex/hooks/log_all.py"]]
+tool_call_started = [["python3", "/Users/alice/.xcodex/hooks/log_all.py"]]
+tool_call_finished = [["python3", "/Users/alice/.xcodex/hooks/log_all.py"]]
+agent_turn_complete = [["python3", "/Users/alice/.xcodex/hooks/log_all.py"]]
+approval_requested = [["python3", "/Users/alice/.xcodex/hooks/log_all.py"]]
 ```
 
 ## Example: approval notifications
@@ -192,9 +202,9 @@ Use this to route alerts (macOS notification, Slack webhook, etc.).
 To get users using hooks with minimal effort, we could add:
 
 - A `xcodex hooks init` command that writes:
-  - `~/.codex/hooks/` example scripts
-  - a commented-out `[hooks]` section in `~/.codex/config.toml`
-- A `just hooks-install` recipe that installs the examples into `~/.codex/hooks/`
+  - `$CODEX_HOME/hooks/` example scripts
+  - a commented-out `[hooks]` section in `$CODEX_HOME/config.toml`
+- A `just hooks-install` recipe that installs the examples into `$CODEX_HOME/hooks/`
 - A small “marketplace” of prebuilt hook scripts in-repo (loggers, notifiers, memory capture)
 - A richer “hooks test” UX (for example, selecting events interactively and previewing payload JSON)
 
