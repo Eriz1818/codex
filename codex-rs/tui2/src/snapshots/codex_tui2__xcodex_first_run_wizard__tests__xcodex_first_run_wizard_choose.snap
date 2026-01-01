@@ -1,17 +1,21 @@
 ---
 source: tui2/src/xcodex_first_run_wizard.rs
-assertion_line: 453
+assertion_line: 1584
 expression: render_snapshot(&screen)
 ---
 
   xcodex setup (first run)
 
   xcodex keeps its config/state separate by default so it can coexist with upstr
+  MCP OAuth tokens are also isolated from upstream codex.
+  Some features differ from upstream; xcodex defaults to its own home directory.
 
   Home: XC_HOME_DOES_NOT_EXIST
 
-› 1. Start fresh (review changes)
-  2. Skip for now
-  3. Don’t show again
+› 1. Start from scratch (review changes)
+  2. Copy all from existing codex home (includes sensitive data)
+  3. Select what you copy from existing codex home
+  4. Skip for now (continue; the wizard may appear again)
+  5. Don’t show again (continue; rerun with --force-setup-wizard)
 
   Press enter to continue

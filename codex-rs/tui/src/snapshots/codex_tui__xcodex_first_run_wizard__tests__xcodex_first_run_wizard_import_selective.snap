@@ -1,0 +1,20 @@
+---
+source: tui/src/xcodex_first_run_wizard.rs
+assertion_line: 1618
+expression: snapshot
+---
+
+  xcodex setup (first run)
+
+  Import selected items from upstream codex (optional):
+
+  Import from: CODEX_HOME (pres
+
+  Select what to copy (Enter/Space toggles, a selects all):
+
+› 1. [x] config.toml (safe)
+  2. [x] rules/ (safe)
+  3. [x] prompts/ (safe)
+  4. [x] skills/ (safe)
+
+  Press c to continue (Review changes), esc to go back

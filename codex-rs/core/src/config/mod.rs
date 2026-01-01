@@ -1603,7 +1603,7 @@ fn is_xcodex_exe_name(name: &OsStr) -> bool {
     let Some(stem) = Path::new(name).file_stem().and_then(OsStr::to_str) else {
         return false;
     };
-    stem == XCODEX_EXE_STEM
+    stem == XCODEX_EXE_STEM || stem.starts_with("xcodex-")
 }
 
 /// Returns `true` when this process appears to have been invoked via the
@@ -1720,6 +1720,16 @@ mod tests {
     fn default_home_dirname_switches_for_xcodex_invocation() {
         assert_eq!(CODEX_DEFAULT_HOME_DIRNAME, default_home_dirname_impl(false));
         assert_eq!(XCODEX_DEFAULT_HOME_DIRNAME, default_home_dirname_impl(true));
+    }
+
+    #[test]
+    fn xcodex_exe_name_matches_prefixed_names() {
+        assert_eq!(true, is_xcodex_exe_name(OsStr::new("xcodex")));
+        assert_eq!(
+            true,
+            is_xcodex_exe_name(OsStr::new("xcodex-x86_64-unknown-linux-musl"))
+        );
+        assert_eq!(false, is_xcodex_exe_name(OsStr::new("codex")));
     }
 
     #[test]
