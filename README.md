@@ -22,9 +22,13 @@ When filing issues, include repro steps and attach the files printed by `/feedba
 
 - Keep context under control with `/compact` and `/autocompact` (see [`docs/xcodex/compact.md`](docs/xcodex/compact.md)).
 - Hide/show agent thoughts in the TUI with `/thoughts` (see [`docs/xcodex/thoughts.md`](docs/xcodex/thoughts.md)).
-- Automate Codex with hooks (includes session/model/tool lifecycle events; see [`docs/xcodex/hooks.md`](docs/xcodex/hooks.md)).
+- Track your worktrees and branches in the status bar with `/settings` (see [`docs/xcodex/settings.md`](docs/xcodex/settings.md)).
+- Automate xcodex with hooks (session/model/tool lifecycle events; see [`docs/xcodex/hooks.md`](docs/xcodex/hooks.md)).
 - Manage background terminals with `/ps` (list) and `/ps-kill` (terminate) (see [`docs/xcodex/background-terminals.md`](docs/xcodex/background-terminals.md)).
-- Confirm-on-exit while hooks are running (toggle with `tui.confirm_exit_with_running_hooks`).
+
+**Fork-only docs**
+
+Fork-specific docs live in `docs/xcodex/` (start at [`docs/xcodex/README.md`](docs/xcodex/README.md)).
 
 ## Quickstart
 
@@ -52,6 +56,8 @@ If you prefer not to use `just`, run:
 scripts/install-xcodex.sh --release
 ```
 
+## Usage
+
 ### Model Context Protocol (MCP)
 
 Codex can access MCP servers. To configure them, refer to the [config docs](./docs/config.md#mcp_servers).
@@ -76,25 +82,11 @@ Start here:
 
 ### Configuration
 
-Codex CLI supports a rich set of configuration options, with preferences stored in `~/.codex/config.toml`. For full configuration options, see [Configuration](./docs/config.md).
+Codex CLI supports a rich set of configuration options, with preferences stored in `$CODEX_HOME/config.toml` (default: `~/.xcodex/config.toml` when invoked as `xcodex`). For full configuration options, see [Configuration](./docs/config.md).
 
 ### Execpolicy
 
 See the [Execpolicy quickstart](./docs/execpolicy.md) to set up rules that govern what commands Codex can execute.
-
-### Keeping context under control (`/compact`, `/autocompact`)
-
-- Use `/compact` to summarize the conversation and free up context.
-- Use `/autocompact` to automatically compact when the conversation gets close to the model’s context limit (supports `on|off|toggle|status` and persists across sessions).
-
-### Hiding thoughts (`/thoughts`)
-
-- Use `/thoughts` to toggle whether agent thoughts/reasoning are shown in the chat transcript (supports `on|off|toggle|status` and persists across sessions).
-
-### Fork notes
-
-- `/feedback` saves a local report for troubleshooting (no network upload); attach the files it prints when filing an issue in your fork.
-- Fork-specific docs live in `docs/xcodex/`.
 
 ### Docs & FAQ
 
@@ -115,7 +107,7 @@ See the [Execpolicy quickstart](./docs/execpolicy.md) to set up rules that gover
 - **Automating Codex**
   - [GitHub Action](https://github.com/openai/codex-action)
   - [TypeScript SDK](./sdk/typescript/README.md)
-  - [Non-interactive mode (`codex exec`)](./docs/exec.md)
+  - [Non-interactive mode (`xcodex exec`)](./docs/exec.md)
 - [**Advanced**](./docs/advanced.md)
   - [Tracing / verbose logging](./docs/advanced.md#tracing--verbose-logging)
   - [Model Context Protocol (MCP)](./docs/advanced.md#model-context-protocol-mcp)

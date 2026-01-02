@@ -4,13 +4,14 @@ xcodex (xtreme-codex) is an effort to add features to upstream Codex CLI.
 
 ## Status
 
-- Slash commands: `/compact`, `/autocompact`, and `/thoughts` are working.
+- Slash commands: `/status`, `/settings`, `/compact`, `/autocompact`, and `/thoughts` are working.
 - Background terminals: `/ps` lists running background terminals and hooks; `/ps-kill` can terminate background terminals.
 - Hooks: basic automation hooks are in place.
 - Other features are in progress; expect rough edges and some churn.
 
 ## What’s here
 
+- Settings: `docs/xcodex/settings.md`
 - Hooks: `docs/xcodex/hooks.md`
 - Keeping context under control: `docs/xcodex/compact.md`
 - Hiding thoughts: `docs/xcodex/thoughts.md`

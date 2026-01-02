@@ -31,7 +31,16 @@ xcodex --no-hooks
 xcodex exec --no-hooks "…"
 ```
 
-In the interactive TUI, quitting while hooks are still running prompts for confirmation by default. Toggle with `tui.confirm_exit_with_running_hooks`.
+### Confirm-on-exit while hooks are running
+
+In the interactive TUI, quitting while hooks are still running prompts for confirmation by default.
+
+Toggle with:
+
+```toml
+[tui]
+confirm_exit_with_running_hooks = false
+```
 
 ## Testing your hooks
 
