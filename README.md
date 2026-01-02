@@ -78,6 +78,7 @@ Hooks can receive event payloads containing metadata like `cwd`, and may include
 Start here:
 
 - Hook configuration + supported events: `docs/xcodex/hooks.md`.
+- Copy/paste scripts: `examples/hooks/` and `docs/xcodex/hooks-gallery.md`.
 - Quick smoke test for your hook scripts: `xcodex hooks test --configured-only`.
 
 ### Configuration

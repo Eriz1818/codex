@@ -4,6 +4,7 @@ Looking for something specific? Jump ahead:
 
 - [Tips & shortcuts](#tips--shortcuts) – hotkeys, resume flow, prompts
 - [Non-interactive runs](./exec.md) – automate with `codex exec`
+- [Automation hooks](#automation-hooks) – run external programs on lifecycle events
 - Ready for deeper customization? Head to [`advanced.md`](./advanced.md)
 
 ### CLI usage
@@ -54,6 +55,15 @@ codex --file PROMPT.md
 # Read the initial prompt from stdin (runs non-interactive `codex exec`)
 cat PROMPT.md | codex
 ```
+
+### Automation hooks
+
+Codex can run external programs when it emits lifecycle events (session/model/tool/approval/turn events). This is intended for **notifications and integrations** (fire-and-forget).
+
+- Configure hooks in `$CODEX_HOME/config.toml` under `[hooks]`: [`config.md#hooks`](./config.md#hooks).
+- Test your configured hooks with synthetic payloads: `codex hooks test` (or `xcodex hooks test` in this fork).
+
+In this fork, the binary is `xcodex`, and the fork-specific overview is [`xcodex/hooks.md`](./xcodex/hooks.md) (with scripts in `../examples/hooks/`).
 
 ### Example prompts
 
