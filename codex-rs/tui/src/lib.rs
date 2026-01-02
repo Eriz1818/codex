@@ -109,23 +109,26 @@ pub async fn run_main(
 ) -> std::io::Result<AppExitInfo> {
     if let Some(path) = cli.prompt_file.take() {
         if path.as_os_str() == "-" {
-            eprintln!(
-                "`--file -` is not supported in the interactive TUI. Pipe the prompt into `codex exec` instead."
-            );
-            std::process::exit(1);
+            return Err(std::io::Error::other(
+                "`--file -` is not supported in the interactive TUI. Pipe the prompt into `codex exec` instead.",
+            ));
         }
 
         match std::fs::read_to_string(&path) {
             Ok(prompt) => {
                 if prompt.trim().is_empty() {
-                    eprintln!("Prompt file {} is empty.", path.display());
-                    std::process::exit(1);
+                    return Err(std::io::Error::other(format!(
+                        "Prompt file {} is empty.",
+                        path.display()
+                    )));
                 }
                 cli.prompt = Some(prompt);
             }
             Err(err) => {
-                eprintln!("Failed to read prompt file {}: {err}", path.display());
-                std::process::exit(1);
+                return Err(std::io::Error::other(format!(
+                    "Failed to read prompt file {}: {err}",
+                    path.display()
+                )));
             }
         }
     }
