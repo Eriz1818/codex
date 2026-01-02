@@ -154,9 +154,39 @@ struct HooksCommand {
 
 #[derive(Debug, clap::Subcommand)]
 enum HooksSubcommand {
+    /// Scaffold a small set of example hook scripts under CODEX_HOME.
+    Init(HooksInitCommand),
+
+    /// List configured hooks from the active config.
+    List(HooksListCommand),
+
+    /// Print where hook logs and payload files are written under CODEX_HOME.
+    Paths(HooksPathsCommand),
+
     /// Invoke configured hook commands with synthetic payloads.
     Test(HooksTestCommand),
 }
+
+#[derive(Debug, Parser)]
+struct HooksInitCommand {
+    /// Overwrite any existing files under CODEX_HOME/hooks.
+    #[arg(long = "force", default_value_t = false)]
+    force: bool,
+
+    /// Don't print a config snippet to paste into config.toml.
+    #[arg(long = "no-print-config", default_value_t = false)]
+    no_print_config: bool,
+}
+
+#[derive(Debug, Parser)]
+struct HooksListCommand {
+    /// Show all hook event keys, even if no commands are configured for them.
+    #[arg(long = "all", default_value_t = false)]
+    all: bool,
+}
+
+#[derive(Debug, Parser)]
+struct HooksPathsCommand {}
 
 #[derive(Debug, Parser)]
 struct HooksTestCommand {
@@ -620,6 +650,32 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Hooks(cmd)) => match cmd.sub {
+            HooksSubcommand::Init(args) => {
+                let codex_home = find_codex_home()?;
+                run_hooks_init(&codex_home, args)?;
+            }
+            HooksSubcommand::List(args) => {
+                let codex_home = find_codex_home()?;
+                let config_cwd = AbsolutePathBuf::current_dir()?;
+                let cli_overrides = root_config_overrides
+                    .parse_overrides()
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                let config_toml =
+                    load_config_as_toml_with_cli_overrides(&codex_home, &config_cwd, cli_overrides)
+                        .await?;
+                print_hooks_list(&codex_home, &config_toml.hooks, args.all);
+            }
+            HooksSubcommand::Paths(_args) => {
+                let codex_home = find_codex_home()?;
+                let config_cwd = AbsolutePathBuf::current_dir()?;
+                let cli_overrides = root_config_overrides
+                    .parse_overrides()
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                let config_toml =
+                    load_config_as_toml_with_cli_overrides(&codex_home, &config_cwd, cli_overrides)
+                        .await?;
+                print_hooks_paths(&codex_home, &config_toml.hooks);
+            }
             HooksSubcommand::Test(args) => {
                 let codex_home = find_codex_home()?;
                 let resolved_cwd = AbsolutePathBuf::current_dir()?;
@@ -970,6 +1026,346 @@ fn print_completion(cmd: CompletionCommand) {
     let mut app = MultitoolCli::command();
     let name = "codex";
     generate(cmd.shell, &mut app, name, &mut std::io::stdout());
+}
+
+fn hooks_dir(codex_home: &std::path::Path) -> std::path::PathBuf {
+    codex_home.join("hooks")
+}
+
+fn hooks_logs_dir(codex_home: &std::path::Path) -> std::path::PathBuf {
+    codex_home.join("tmp").join("hooks").join("logs")
+}
+
+fn hooks_payloads_dir(codex_home: &std::path::Path) -> std::path::PathBuf {
+    codex_home.join("tmp").join("hooks").join("payloads")
+}
+
+fn run_hooks_init(codex_home: &std::path::Path, args: HooksInitCommand) -> anyhow::Result<()> {
+    std::fs::create_dir_all(codex_home)?;
+
+    let hooks_dir = hooks_dir(codex_home);
+    std::fs::create_dir_all(&hooks_dir)?;
+
+    let scripts = [
+        ("log_all_jsonl.py", hooks_init_template_log_all_jsonl()),
+        (
+            "tool_call_summary.py",
+            hooks_init_template_tool_call_summary(),
+        ),
+        (
+            "approval_notify_macos_terminal_notifier.py",
+            hooks_init_template_approval_notify_macos_terminal_notifier(),
+        ),
+        (
+            "notify_linux_notify_send.py",
+            hooks_init_template_notify_linux_notify_send(),
+        ),
+    ];
+
+    let mut wrote = Vec::new();
+    let mut skipped = Vec::new();
+
+    for (filename, content) in scripts {
+        let path = hooks_dir.join(filename);
+        if path.exists() && !args.force {
+            skipped.push(path);
+            continue;
+        }
+
+        std::fs::write(&path, content)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+        }
+
+        wrote.push(path);
+    }
+
+    println!("CODEX_HOME: {}", codex_home.display());
+    println!("Hooks dir: {}", hooks_dir.display());
+    if wrote.is_empty() {
+        println!("Wrote 0 files.");
+    } else {
+        println!("Wrote {} file(s):", wrote.len());
+        for path in &wrote {
+            println!("- {}", path.display());
+        }
+    }
+    if !skipped.is_empty() {
+        println!(
+            "Skipped {} existing file(s) (use --force to overwrite):",
+            skipped.len()
+        );
+        for path in &skipped {
+            println!("- {}", path.display());
+        }
+    }
+
+    if !args.no_print_config {
+        let log_all = hooks_dir.join("log_all_jsonl.py");
+        let tool_summary = hooks_dir.join("tool_call_summary.py");
+        let approval_macos = hooks_dir.join("approval_notify_macos_terminal_notifier.py");
+        let notify_linux = hooks_dir.join("notify_linux_notify_send.py");
+
+        println!();
+        println!("Paste this into {}/config.toml:", codex_home.display());
+        println!();
+        println!("[hooks]");
+        println!(
+            "agent_turn_complete = [[\"python3\", \"{}\"]]",
+            log_all.display()
+        );
+        println!(
+            "tool_call_finished = [[\"python3\", \"{}\"]]",
+            tool_summary.display()
+        );
+        println!(
+            "# approval_requested = [[\"python3\", \"{}\"]]",
+            approval_macos.display()
+        );
+        println!(
+            "# approval_requested = [[\"python3\", \"{}\"]]",
+            notify_linux.display()
+        );
+        println!();
+        println!("Then run: xcodex hooks test --configured-only");
+    }
+
+    Ok(())
+}
+
+fn print_hooks_list(
+    codex_home: &std::path::Path,
+    hooks: &codex_core::config::HooksConfig,
+    all: bool,
+) {
+    println!("CODEX_HOME: {}", codex_home.display());
+    println!("Config: {}", codex_home.join("config.toml").display());
+    println!(
+        "hooks.max_stdin_payload_bytes={}",
+        hooks.max_stdin_payload_bytes
+    );
+    println!("hooks.keep_last_n_payloads={}", hooks.keep_last_n_payloads);
+
+    let entries: [(&str, &Vec<Vec<String>>); 8] = [
+        ("hooks.agent_turn_complete", &hooks.agent_turn_complete),
+        ("hooks.approval_requested", &hooks.approval_requested),
+        ("hooks.session_start", &hooks.session_start),
+        ("hooks.session_end", &hooks.session_end),
+        ("hooks.model_request_started", &hooks.model_request_started),
+        (
+            "hooks.model_response_completed",
+            &hooks.model_response_completed,
+        ),
+        ("hooks.tool_call_started", &hooks.tool_call_started),
+        ("hooks.tool_call_finished", &hooks.tool_call_finished),
+    ];
+
+    let configured = entries
+        .iter()
+        .filter(|(_key, commands)| !commands.is_empty())
+        .count();
+    println!("Configured events: {configured}");
+
+    for (key, commands) in entries {
+        if commands.is_empty() && !all {
+            continue;
+        }
+
+        println!();
+        println!("{key}:");
+        if commands.is_empty() {
+            println!("- (none)");
+            continue;
+        }
+
+        for command in commands {
+            println!("- {command:?}");
+        }
+    }
+}
+
+fn print_hooks_paths(codex_home: &std::path::Path, hooks: &codex_core::config::HooksConfig) {
+    println!("CODEX_HOME: {}", codex_home.display());
+    println!("Logs: {}", hooks_logs_dir(codex_home).display());
+    println!("Payloads: {}", hooks_payloads_dir(codex_home).display());
+    println!("hooks.keep_last_n_payloads={}", hooks.keep_last_n_payloads);
+    println!(
+        "hooks.max_stdin_payload_bytes={}",
+        hooks.max_stdin_payload_bytes
+    );
+}
+
+fn hooks_init_template_log_all_jsonl() -> &'static str {
+    r#"#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+
+def read_payload() -> dict:
+    raw = sys.stdin.read() or "{}"
+    payload = json.loads(raw)
+    payload_path = payload.get("payload-path")
+    if payload_path:
+        payload = json.loads(pathlib.Path(payload_path).read_text())
+    return payload
+
+
+def main() -> int:
+    payload = read_payload()
+    codex_home = pathlib.Path(os.environ.get("CODEX_HOME", str(pathlib.Path.home() / ".xcodex")))
+    out = codex_home / "hooks.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(payload) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"#
+}
+
+fn hooks_init_template_tool_call_summary() -> &'static str {
+    r#"#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+
+def read_payload() -> dict:
+    raw = sys.stdin.read() or "{}"
+    payload = json.loads(raw)
+    payload_path = payload.get("payload-path")
+    if payload_path:
+        payload = json.loads(pathlib.Path(payload_path).read_text())
+    return payload
+
+
+def main() -> int:
+    payload = read_payload()
+    if payload.get("type") != "tool-call-finished":
+        return 0
+
+    tool_name = payload.get("tool-name") or payload.get("tool_name") or "unknown"
+    status = payload.get("status") or "unknown"
+    duration_ms = payload.get("duration-ms") or payload.get("duration_ms") or 0
+    success = payload.get("success")
+    output_bytes = payload.get("output-bytes") or payload.get("output_bytes") or 0
+    cwd = payload.get("cwd") or ""
+
+    codex_home = pathlib.Path(os.environ.get("CODEX_HOME", str(pathlib.Path.home() / ".xcodex")))
+    out = codex_home / "hooks-tool-calls.log"
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    line = (
+        f"type=tool-call-finished tool={tool_name} status={status} "
+        f"success={success} duration_ms={duration_ms} output_bytes={output_bytes} cwd={cwd}\n"
+    )
+    with out.open("a", encoding="utf-8") as f:
+        f.write(line)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"#
+}
+
+fn hooks_init_template_approval_notify_macos_terminal_notifier() -> &'static str {
+    r#"#!/usr/bin/env python3
+import json
+import pathlib
+import shutil
+import subprocess
+import sys
+
+
+def read_payload() -> dict:
+    raw = sys.stdin.read() or "{}"
+    payload = json.loads(raw)
+    payload_path = payload.get("payload-path")
+    if payload_path:
+        payload = json.loads(pathlib.Path(payload_path).read_text())
+    return payload
+
+
+def main() -> int:
+    payload = read_payload()
+    if payload.get("type") != "approval-requested":
+        return 0
+
+    notifier = shutil.which("terminal-notifier")
+    if notifier is None:
+        return 0
+
+    kind = payload.get("kind") or "unknown"
+    cwd = payload.get("cwd") or ""
+    title = "xcodex approval requested"
+    message = f"kind={kind} cwd={cwd}".strip()
+
+    subprocess.run([notifier, "-title", title, "-message", message], check=False)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"#
+}
+
+fn hooks_init_template_notify_linux_notify_send() -> &'static str {
+    r#"#!/usr/bin/env python3
+import json
+import pathlib
+import shutil
+import subprocess
+import sys
+
+
+def read_payload() -> dict:
+    raw = sys.stdin.read() or "{}"
+    payload = json.loads(raw)
+    payload_path = payload.get("payload-path")
+    if payload_path:
+        payload = json.loads(pathlib.Path(payload_path).read_text())
+    return payload
+
+
+def main() -> int:
+    payload = read_payload()
+
+    notify_send = shutil.which("notify-send")
+    if notify_send is None:
+        return 0
+
+    event_type = payload.get("type") or "unknown"
+    kind = payload.get("kind")
+    cwd = payload.get("cwd") or ""
+
+    title = "xcodex hook"
+    if event_type == "approval-requested":
+        title = "xcodex approval requested"
+
+    details = []
+    details.append(f"type={event_type}")
+    if kind:
+        details.append(f"kind={kind}")
+    if cwd:
+        details.append(f"cwd={cwd}")
+    message = " ".join(details)
+
+    subprocess.run([notify_send, title, message], check=False)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"#
 }
 
 #[cfg(test)]

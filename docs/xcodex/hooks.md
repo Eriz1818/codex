@@ -38,6 +38,14 @@ See also:
 - Hooks gallery: `docs/xcodex/hooks-gallery.md`
 - Ready-to-use scripts: `examples/hooks/`
 
+If you prefer scaffolding, run:
+
+```sh
+xcodex hooks init
+```
+
+That creates a small set of example scripts under `$CODEX_HOME/hooks/` and prints a config snippet you can paste into `$CODEX_HOME/config.toml`.
+
 1. Copy a script into your Codex home:
 
 ```sh
@@ -59,6 +67,18 @@ xcodex hooks test --configured-only
 ```
 
 That command prints where hook logs and payload files were written under `$CODEX_HOME`.
+
+To inspect your current hook configuration, run:
+
+```sh
+xcodex hooks list
+```
+
+To print where hook logs and payloads are written, run:
+
+```sh
+xcodex hooks paths
+```
 
 ### Confirm-on-exit while hooks are running
 
