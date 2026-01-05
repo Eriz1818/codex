@@ -46,7 +46,7 @@ xcodex hooks init
 
 That creates a small set of example scripts under `$CODEX_HOME/hooks/` and prints a config snippet you can paste into `$CODEX_HOME/config.toml`.
 
-In the interactive TUI, you can type `/hooks` to see a quick reminder of the relevant `xcodex hooks ...` commands and where logs/payloads are written under `$CODEX_HOME`.
+In the interactive TUI/TUI2, you can type `/hooks` to see a quick reminder of the relevant `xcodex hooks ...` commands and where logs/payloads are written under `$CODEX_HOME`.
 
 1. Copy a script into your Codex home:
 

@@ -21,6 +21,9 @@ Control Codex’s behavior during an interactive session with slash commands.
 | `/compact`      | summarize conversation to prevent hitting the context limit                |
 | `/autocompact`  | toggle automatic conversation compaction (supports `on|off|toggle|status`) |
 | `/thoughts`     | toggle showing agent thoughts/reasoning (supports `on|off|toggle|status`)  |
+| `/hooks`        | show automation hooks quickstart + paths                                   |
+| `/ps`           | list running background terminals and hooks                                |
+| `/ps-kill`      | terminate background terminals                                             |
 | `/diff`         | show git diff (including untracked files)                                  |
 | `/mention`      | mention a file                                                             |
 | `/status`       | show current session configuration and token usage                         |
