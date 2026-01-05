@@ -842,7 +842,7 @@ impl App {
                 .transcript_selection
                 .head
                 .or(self.transcript_selection.anchor)
-            && let Some(cell_index) = Self::cell_index_for_line(&line_meta, point.line_index)
+            && let Some(cell_index) = Self::cell_index_for_line(line_meta, point.line_index)
             && let Some(cell) = self.transcript_cells.get(cell_index)
             && let Some(exec_cell) = cell.as_any().downcast_ref::<crate::exec_cell::ExecCell>()
             && let Some(call) = exec_cell.calls.first()
