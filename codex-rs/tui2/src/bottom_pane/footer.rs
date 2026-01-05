@@ -719,5 +719,26 @@ mod tests {
                 show_status_bar_worktree: false,
             },
         );
+
+        snapshot_footer(
+            "footer_status_bar_git_context",
+            FooterProps {
+                mode: FooterMode::ShortcutSummary,
+                esc_backtrack_hint: false,
+                use_shift_enter_hint: false,
+                is_task_running: false,
+                context_window_percent: Some(72),
+                context_window_used_tokens: None,
+                transcript_scrolled: false,
+                transcript_selection_active: false,
+                transcript_scroll_position: None,
+                transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
+                transcript_copy_feedback: None,
+                status_bar_git_branch: Some("feature-branch"),
+                status_bar_worktree: Some("/repo"),
+                show_status_bar_git_branch: true,
+                show_status_bar_worktree: true,
+            },
+        );
     }
 }
