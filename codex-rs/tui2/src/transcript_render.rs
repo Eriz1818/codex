@@ -204,18 +204,16 @@ pub(crate) fn append_wrapped_transcript_cell(
     // viewport wrapping to prose while keeping preformatted content intact.
     let expanded = exec_cell_primary_call_id(cell.as_ref())
         .is_some_and(|id| expanded_exec_call_ids.contains(id));
-    let rendered = if !verbose_tool_output
-        && cell.as_any().is::<crate::exec_cell::ExecCell>()
-        && !expanded
-    {
-        let lines = cell.display_lines(width);
-        TranscriptLinesWithJoiners {
-            joiner_before: vec![None; lines.len()],
-            lines,
-        }
-    } else {
-        cell.transcript_lines_with_joiners(width)
-    };
+    let rendered =
+        if !verbose_tool_output && cell.as_any().is::<crate::exec_cell::ExecCell>() && !expanded {
+            let lines = cell.display_lines(width);
+            TranscriptLinesWithJoiners {
+                joiner_before: vec![None; lines.len()],
+                lines,
+            }
+        } else {
+            cell.transcript_lines_with_joiners(width)
+        };
     if rendered.lines.is_empty() {
         return;
     }
@@ -535,7 +533,8 @@ mod tests {
         ];
 
         let width = 7;
-        let full = build_wrapped_transcript_lines(&cells, width);
+        let expanded_exec_call_ids = HashSet::new();
+        let full = build_wrapped_transcript_lines(&cells, width, true, &expanded_exec_call_ids);
 
         let mut out = TranscriptLines {
             lines: Vec::new(),
@@ -553,6 +552,8 @@ mod tests {
                 cell,
                 width,
                 &base_opts,
+                true,
+                &expanded_exec_call_ids,
             );
         }
 

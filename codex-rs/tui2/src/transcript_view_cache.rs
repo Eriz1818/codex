@@ -82,7 +82,10 @@ use ratatui::prelude::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::WidgetRef;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::VecDeque;
+use std::hash::Hash as _;
+use std::hash::Hasher as _;
 use std::sync::Arc;
 
 /// Top-level cache for the inline transcript viewport.
@@ -137,8 +140,16 @@ impl TranscriptViewCache {
     ///
     /// The raster cache is invalidated whenever the wrapped transcript is rebuilt or the width no
     /// longer matches.
-    pub(crate) fn ensure_wrapped(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16) {
-        let update = self.wrapped.ensure(cells, width);
+    pub(crate) fn ensure_wrapped(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        width: u16,
+        verbose_tool_output: bool,
+        expanded_exec_call_ids: &HashSet<String>,
+    ) {
+        let update = self
+            .wrapped
+            .ensure(cells, width, verbose_tool_output, expanded_exec_call_ids);
         if update == WrappedTranscriptUpdate::Rebuilt {
             self.raster.width = width;
             self.raster.clear();
@@ -267,6 +278,12 @@ struct WrappedTranscriptCache {
     /// We store this alongside the wrapped transcript so user-row styling can be derived cheaply
     /// from `TranscriptLineMeta::cell_index()` without re-inspecting the cell type every frame.
     is_user_cell: Vec<bool>,
+
+    /// Whether tool output is expanded in the transcript.
+    verbose_tool_output: bool,
+
+    /// Fingerprint of currently-expanded exec call ids.
+    expanded_exec_call_ids_fingerprint: u64,
 }
 
 impl WrappedTranscriptCache {
@@ -286,6 +303,8 @@ impl WrappedTranscriptCache {
             },
             has_emitted_lines: false,
             is_user_cell: Vec::new(),
+            verbose_tool_output: false,
+            expanded_exec_call_ids_fingerprint: 0,
         }
     }
 
@@ -297,7 +316,15 @@ impl WrappedTranscriptCache {
     ///
     /// The cache assumes history cells are append-only and immutable once inserted. If existing
     /// cell contents can change without changing identity, callers must treat that as a rebuild.
-    fn ensure(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16) -> WrappedTranscriptUpdate {
+    fn ensure(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        width: u16,
+        verbose_tool_output: bool,
+        expanded_exec_call_ids: &HashSet<String>,
+    ) -> WrappedTranscriptUpdate {
+        let expanded_exec_call_ids_fingerprint =
+            expanded_exec_call_ids_fingerprint(expanded_exec_call_ids);
         if width == 0 {
             self.width = width;
             self.cell_count = cells.len();
@@ -307,6 +334,8 @@ impl WrappedTranscriptCache {
             self.transcript.joiner_before.clear();
             self.has_emitted_lines = false;
             self.is_user_cell.clear();
+            self.verbose_tool_output = verbose_tool_output;
+            self.expanded_exec_call_ids_fingerprint = expanded_exec_call_ids_fingerprint;
             return WrappedTranscriptUpdate::Rebuilt;
         }
 
@@ -316,8 +345,10 @@ impl WrappedTranscriptCache {
             || (self.cell_count > 0
                 && current_first_ptr.is_some()
                 && self.first_cell_ptr != current_first_ptr)
+            || self.verbose_tool_output != verbose_tool_output
+            || self.expanded_exec_call_ids_fingerprint != expanded_exec_call_ids_fingerprint
         {
-            self.rebuild(cells, width);
+            self.rebuild(cells, width, verbose_tool_output, expanded_exec_call_ids);
             return WrappedTranscriptUpdate::Rebuilt;
         }
 
@@ -328,6 +359,8 @@ impl WrappedTranscriptCache {
         let old_cell_count = self.cell_count;
         self.cell_count = cells.len();
         self.first_cell_ptr = current_first_ptr;
+        self.verbose_tool_output = verbose_tool_output;
+        self.expanded_exec_call_ids_fingerprint = expanded_exec_call_ids_fingerprint;
         let base_opts: crate::wrapping::RtOptions<'_> =
             crate::wrapping::RtOptions::new(width.max(1) as usize);
         for (cell_index, cell) in cells.iter().enumerate().skip(old_cell_count) {
@@ -340,6 +373,8 @@ impl WrappedTranscriptCache {
                 cell,
                 width,
                 &base_opts,
+                verbose_tool_output,
+                expanded_exec_call_ids,
             );
         }
 
@@ -350,10 +385,19 @@ impl WrappedTranscriptCache {
     ///
     /// This is used when width changes, the transcript is truncated, or the caller provides a new
     /// cell list that cannot be treated as an append to the previous one.
-    fn rebuild(&mut self, cells: &[Arc<dyn HistoryCell>], width: u16) {
+    fn rebuild(
+        &mut self,
+        cells: &[Arc<dyn HistoryCell>],
+        width: u16,
+        verbose_tool_output: bool,
+        expanded_exec_call_ids: &HashSet<String>,
+    ) {
         self.width = width;
         self.cell_count = cells.len();
         self.first_cell_ptr = cells.first().map(Arc::as_ptr);
+        self.verbose_tool_output = verbose_tool_output;
+        self.expanded_exec_call_ids_fingerprint =
+            expanded_exec_call_ids_fingerprint(expanded_exec_call_ids);
         self.transcript.lines.clear();
         self.transcript.meta.clear();
         self.transcript.joiner_before.clear();
@@ -373,9 +417,22 @@ impl WrappedTranscriptCache {
                 cell,
                 width,
                 &base_opts,
+                verbose_tool_output,
+                expanded_exec_call_ids,
             );
         }
     }
+}
+
+fn expanded_exec_call_ids_fingerprint(expanded_exec_call_ids: &HashSet<String>) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    let mut acc = 0_u64;
+    for id in expanded_exec_call_ids {
+        let mut hasher = DefaultHasher::new();
+        id.hash(&mut hasher);
+        acc ^= hasher.finish();
+    }
+    acc
 }
 
 /// Bounded cache of rasterized transcript rows.
@@ -683,10 +740,16 @@ mod tests {
         ];
 
         let width = 8;
-        let expected = crate::transcript_render::build_wrapped_transcript_lines(&cells, width);
+        let expanded_exec_call_ids = HashSet::new();
+        let expected = crate::transcript_render::build_wrapped_transcript_lines(
+            &cells,
+            width,
+            false,
+            &expanded_exec_call_ids,
+        );
 
         let mut cache = TranscriptViewCache::new();
-        cache.ensure_wrapped(&cells, width);
+        cache.ensure_wrapped(&cells, width, false, &expanded_exec_call_ids);
 
         assert_eq!(cache.lines(), expected.lines.as_slice());
         assert_eq!(cache.line_meta(), expected.meta.as_slice());
@@ -721,8 +784,9 @@ mod tests {
         ];
 
         let mut cache = TranscriptViewCache::new();
-        cache.ensure_wrapped(&cells[..1], 8);
-        cache.ensure_wrapped(&cells, 8);
+        let expanded_exec_call_ids = HashSet::new();
+        cache.ensure_wrapped(&cells[..1], 8, false, &expanded_exec_call_ids);
+        cache.ensure_wrapped(&cells, 8, false, &expanded_exec_call_ids);
 
         assert_eq!(calls0.load(Ordering::Relaxed), 1);
         assert_eq!(calls1.load(Ordering::Relaxed), 1);
@@ -791,13 +855,19 @@ mod tests {
         ];
 
         let mut cache = TranscriptViewCache::new();
-        cache.ensure_wrapped(&cells, 8);
-        cache.ensure_wrapped(&cells, 10);
+        let expanded_exec_call_ids = HashSet::new();
+        cache.ensure_wrapped(&cells, 8, false, &expanded_exec_call_ids);
+        cache.ensure_wrapped(&cells, 10, false, &expanded_exec_call_ids);
 
         assert_eq!(calls0.load(Ordering::Relaxed), 2);
         assert_eq!(calls1.load(Ordering::Relaxed), 2);
 
-        let expected = crate::transcript_render::build_wrapped_transcript_lines(&cells, 10);
+        let expected = crate::transcript_render::build_wrapped_transcript_lines(
+            &cells,
+            10,
+            false,
+            &expanded_exec_call_ids,
+        );
         assert_eq!(cache.lines(), expected.lines.as_slice());
         assert_eq!(cache.line_meta(), expected.meta.as_slice());
         assert_eq!(
@@ -826,14 +896,20 @@ mod tests {
         ];
 
         let mut cache = TranscriptViewCache::new();
-        cache.ensure_wrapped(&cells, 8);
-        cache.ensure_wrapped(&cells[..1], 8);
+        let expanded_exec_call_ids = HashSet::new();
+        cache.ensure_wrapped(&cells, 8, false, &expanded_exec_call_ids);
+        cache.ensure_wrapped(&cells[..1], 8, false, &expanded_exec_call_ids);
 
         // The second ensure is a rebuild of the truncated prefix; only the first cell is rendered.
         assert_eq!(calls0.load(Ordering::Relaxed), 2);
         assert_eq!(calls1.load(Ordering::Relaxed), 1);
 
-        let expected = crate::transcript_render::build_wrapped_transcript_lines(&cells[..1], 8);
+        let expected = crate::transcript_render::build_wrapped_transcript_lines(
+            &cells[..1],
+            8,
+            false,
+            &expanded_exec_call_ids,
+        );
         assert_eq!(cache.lines(), expected.lines.as_slice());
         assert_eq!(cache.line_meta(), expected.meta.as_slice());
     }
@@ -849,7 +925,8 @@ mod tests {
         ))];
 
         let mut cache = TranscriptViewCache::new();
-        cache.ensure_wrapped(&cells, 0);
+        let expanded_exec_call_ids = HashSet::new();
+        cache.ensure_wrapped(&cells, 0, false, &expanded_exec_call_ids);
 
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         assert_eq!(cache.lines(), &[]);
@@ -879,7 +956,13 @@ mod tests {
         ));
 
         let mut cache = TranscriptViewCache::new();
-        cache.ensure_wrapped(&[cell_a0.clone(), cell_a1.clone()], 10);
+        let expanded_exec_call_ids = HashSet::new();
+        cache.ensure_wrapped(
+            &[cell_a0.clone(), cell_a1.clone()],
+            10,
+            false,
+            &expanded_exec_call_ids,
+        );
         assert_eq!(calls_a.load(Ordering::Relaxed), 1);
         assert_eq!(calls_b.load(Ordering::Relaxed), 1);
 
@@ -892,7 +975,12 @@ mod tests {
             calls_c.clone(),
         ));
 
-        cache.ensure_wrapped(&[cell_b0.clone(), cell_a1.clone()], 10);
+        cache.ensure_wrapped(
+            &[cell_b0.clone(), cell_a1.clone()],
+            10,
+            false,
+            &expanded_exec_call_ids,
+        );
 
         // This should be treated as a replacement and rebuilt from scratch.
         assert_eq!(calls_c.load(Ordering::Relaxed), 1);
@@ -912,7 +1000,8 @@ mod tests {
             calls,
         ))];
 
-        cache.ensure_wrapped(&cells, 20);
+        let expanded_exec_call_ids = HashSet::new();
+        cache.ensure_wrapped(&cells, 20, false, &expanded_exec_call_ids);
         cache.set_raster_capacity(8);
 
         let area = Rect::new(0, 0, 10, 1);
@@ -970,7 +1059,8 @@ mod tests {
             calls,
         ))];
 
-        cache.ensure_wrapped(&cells, 10);
+        let expanded_exec_call_ids = HashSet::new();
+        cache.ensure_wrapped(&cells, 10, false, &expanded_exec_call_ids);
         cache.set_raster_capacity(1);
 
         let area = Rect::new(0, 0, 10, 1);
@@ -996,7 +1086,8 @@ mod tests {
             calls,
         ))];
 
-        cache.ensure_wrapped(&cells, 20);
+        let expanded_exec_call_ids = HashSet::new();
+        cache.ensure_wrapped(&cells, 20, false, &expanded_exec_call_ids);
         cache.set_raster_capacity(1);
 
         let area = Rect::new(0, 0, 10, 1);
@@ -1020,7 +1111,8 @@ mod tests {
             message: "hello".to_string(),
         })];
 
-        cache.ensure_wrapped(&cells, 20);
+        let expanded_exec_call_ids = HashSet::new();
+        cache.ensure_wrapped(&cells, 20, false, &expanded_exec_call_ids);
         cache.set_raster_capacity(8);
 
         let area = Rect::new(0, 0, 20, 1);

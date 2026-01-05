@@ -3760,10 +3760,12 @@ impl ChatWidget {
 
         let all_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
             tx.send(AppEvent::CodexOp(Op::TerminateAllUnifiedExecSessions));
-            tx.send(AppEvent::InsertHistoryCell(Box::new(history_cell::new_info_event(
-                "Terminating all background terminals…".to_string(),
-                None,
-            ))));
+            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                history_cell::new_info_event(
+                    "Terminating all background terminals…".to_string(),
+                    None,
+                ),
+            )));
         })];
         items.push(SelectionItem {
             name: "Terminate all background terminals".to_string(),
@@ -3784,10 +3786,12 @@ impl ChatWidget {
                 tx.send(AppEvent::CodexOp(Op::TerminateUnifiedExecSession {
                     process_id: process_id_for_action.clone(),
                 }));
-                tx.send(AppEvent::InsertHistoryCell(Box::new(history_cell::new_info_event(
-                    format!("Terminating background terminal {process_id_for_action}…"),
-                    None,
-                ))));
+                tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    history_cell::new_info_event(
+                        format!("Terminating background terminal {process_id_for_action}…"),
+                        None,
+                    ),
+                )));
             })];
             items.push(SelectionItem {
                 name: process_id,

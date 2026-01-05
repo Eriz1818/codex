@@ -53,6 +53,7 @@ use crossterm::event::MouseButton;
 use crossterm::event::MouseEvent;
 use crossterm::event::MouseEventKind;
 use ratatui::layout::Rect;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +96,8 @@ pub(crate) struct TranscriptScrollbarMouseEvent<'a> {
     pub(crate) scrollbar_area: Option<Rect>,
     pub(crate) transcript_cells: &'a [Arc<dyn HistoryCell>],
     pub(crate) transcript_view_cache: &'a mut TranscriptViewCache,
+    pub(crate) verbose_tool_output: bool,
+    pub(crate) expanded_exec_call_ids: &'a HashSet<String>,
     pub(crate) transcript_scroll: &'a mut TranscriptScroll,
     pub(crate) transcript_view_top: &'a mut usize,
     pub(crate) transcript_total_lines: &'a mut usize,
@@ -126,6 +129,8 @@ impl TranscriptScrollbarUi {
             scrollbar_area,
             transcript_cells,
             transcript_view_cache,
+            verbose_tool_output,
+            expanded_exec_call_ids,
             transcript_scroll,
             transcript_view_top,
             transcript_total_lines,
@@ -163,7 +168,12 @@ impl TranscriptScrollbarUi {
 
         let viewport_lines = transcript_area.height as usize;
         let scrollbar_is_visible = if viewport_lines > 0 && !transcript_cells.is_empty() {
-            transcript_view_cache.ensure_wrapped(transcript_cells, transcript_area.width);
+            transcript_view_cache.ensure_wrapped(
+                transcript_cells,
+                transcript_area.width,
+                verbose_tool_output,
+                expanded_exec_call_ids,
+            );
             let total_lines = transcript_view_cache.lines().len();
             let max_visible = std::cmp::min(total_lines, viewport_lines);
             is_transcript_scrollbar_active(total_lines, max_visible, *transcript_view_top)

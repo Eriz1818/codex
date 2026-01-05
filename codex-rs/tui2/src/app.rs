@@ -738,13 +738,12 @@ impl App {
         let (transcript_area, _) = split_transcript_area(transcript_full_area);
 
         self.last_transcript_width = transcript_area.width;
-        self.transcript_view_cache
-            .ensure_wrapped(
-                cells,
-                transcript_area.width,
-                self.config.tui_verbose_tool_output,
-                &self.expanded_exec_call_ids,
-            );
+        self.transcript_view_cache.ensure_wrapped(
+            cells,
+            transcript_area.width,
+            self.config.tui_verbose_tool_output,
+            &self.expanded_exec_call_ids,
+        );
         let total_lines = self.transcript_view_cache.lines().len();
         if total_lines == 0 {
             Clear.render_ref(transcript_full_area, frame.buffer);
@@ -954,6 +953,8 @@ impl App {
                     scrollbar_area: transcript_scrollbar_area,
                     transcript_cells: &self.transcript_cells,
                     transcript_view_cache: &mut self.transcript_view_cache,
+                    verbose_tool_output: self.config.tui_verbose_tool_output,
+                    expanded_exec_call_ids: &self.expanded_exec_call_ids,
                     transcript_scroll: &mut self.transcript_scroll,
                     transcript_view_top: &mut self.transcript_view_top,
                     transcript_total_lines: &mut self.transcript_total_lines,
@@ -1234,13 +1235,12 @@ impl App {
             return;
         }
 
-        self.transcript_view_cache
-            .ensure_wrapped(
-                &self.transcript_cells,
-                width,
-                self.config.tui_verbose_tool_output,
-                &self.expanded_exec_call_ids,
-            );
+        self.transcript_view_cache.ensure_wrapped(
+            &self.transcript_cells,
+            width,
+            self.config.tui_verbose_tool_output,
+            &self.expanded_exec_call_ids,
+        );
         let line_meta = self.transcript_view_cache.line_meta();
         self.transcript_scroll =
             self.transcript_scroll
@@ -1264,13 +1264,12 @@ impl App {
             return;
         }
 
-        self.transcript_view_cache
-            .ensure_wrapped(
-                &self.transcript_cells,
-                width,
-                self.config.tui_verbose_tool_output,
-                &self.expanded_exec_call_ids,
-            );
+        self.transcript_view_cache.ensure_wrapped(
+            &self.transcript_cells,
+            width,
+            self.config.tui_verbose_tool_output,
+            &self.expanded_exec_call_ids,
+        );
         let lines = self.transcript_view_cache.lines();
         let line_meta = self.transcript_view_cache.line_meta();
         if lines.is_empty() || line_meta.is_empty() {
