@@ -1,0 +1,29 @@
+---
+source: tui2/src/history_cell.rs
+expression: rendered
+---
+/ps
+
+Background terminals (20)
+
+  • proc-0 command 0
+  • proc-1 command 1
+  • proc-2 command 2
+  • proc-3 command 3
+  • proc-4 command 4
+  • proc-5 command 5
+  • proc-6 command 6
+  • proc-7 command 7
+  • proc-8 command 8
+  • proc-9 command 9
+  • proc-10 command 10
+  • proc-11 command 11
+  • proc-12 command 12
+  • proc-13 command 13
+  • proc-14 command 14
+  • proc-15 command 15
+  • ... and 4 more running
+
+Hooks (0)
+
+  • No hooks running.

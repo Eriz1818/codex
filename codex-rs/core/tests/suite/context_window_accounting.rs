@@ -47,6 +47,7 @@ async fn interrupt_recomputes_prompt_estimate_after_history_grows() -> Result<()
             items: vec![UserInput::Text {
                 text: "x".repeat(5_000),
             }],
+            final_output_json_schema: None,
         })
         .await?;
 
@@ -113,6 +114,7 @@ async fn auto_compact_disabled_does_not_locally_block_on_context_window() -> Res
             items: vec![UserInput::Text {
                 text: "trigger context overflow".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
 
@@ -180,6 +182,7 @@ async fn resume_emits_prompt_estimate_consistent_with_aborted_history() -> Resul
             items: vec![UserInput::Text {
                 text: "x".repeat(5_000),
             }],
+            final_output_json_schema: None,
         })
         .await?;
     core_test_support::wait_for_event(&codex, |ev| matches!(ev, EventMsg::ExecCommandBegin(_)))

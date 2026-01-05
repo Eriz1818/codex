@@ -1,4 +1,4 @@
-## Non-interactive mode
+# Non-interactive mode
 
 Use Codex in non-interactive mode to automate common workflows.
 

@@ -115,7 +115,7 @@ pub(crate) enum AppEvent {
     /// Update the current model slug in the running app and widget.
     UpdateModel(String),
 
-    /// Update whether agent reasoning is displayed in the TUI.
+    /// Update whether `AgentReasoning` events should be hidden from UI output.
     UpdateHideAgentReasoning(bool),
 
     /// Persist the selected model and reasoning effort to the appropriate config.

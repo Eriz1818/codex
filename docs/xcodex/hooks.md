@@ -31,6 +31,57 @@ xcodex --no-hooks
 xcodex exec --no-hooks "…"
 ```
 
+## Quickstart (copy/paste)
+
+See also:
+
+- Hooks gallery: `docs/xcodex/hooks-gallery.md`
+- Ready-to-use scripts: `examples/hooks/`
+
+If you prefer scaffolding, run:
+
+```sh
+xcodex hooks init
+```
+
+That creates a small set of example scripts under `$CODEX_HOME/hooks/` and prints a config snippet you can paste into `$CODEX_HOME/config.toml`.
+
+In the interactive TUI/TUI2, you can type `/hooks` to see a quick reminder of the relevant `xcodex hooks ...` commands and where logs/payloads are written under `$CODEX_HOME`.
+
+1. Copy a script into your Codex home:
+
+```sh
+mkdir -p "${CODEX_HOME:-$HOME/.xcodex}/hooks"
+cp examples/hooks/log_all_jsonl.py "${CODEX_HOME:-$HOME/.xcodex}/hooks/"
+```
+
+2. Add a `[hooks]` entry to `$CODEX_HOME/config.toml` (use an absolute path):
+
+```toml
+[hooks]
+agent_turn_complete = [["python3", "/absolute/path/to/log_all_jsonl.py"]]
+```
+
+3. Test it:
+
+```sh
+xcodex hooks test --configured-only
+```
+
+That command prints where hook logs and payload files were written under `$CODEX_HOME`.
+
+To inspect your current hook configuration, run:
+
+```sh
+xcodex hooks list
+```
+
+To print where hook logs and payloads are written, run:
+
+```sh
+xcodex hooks paths
+```
+
 ### Confirm-on-exit while hooks are running
 
 In the interactive TUI, quitting while hooks are still running prompts for confirmation by default.

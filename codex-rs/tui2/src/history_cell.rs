@@ -7,6 +7,7 @@ use crate::exec_cell::output_lines;
 use crate::exec_cell::spinner;
 use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
+use crate::live_wrap::take_prefix_by_width;
 use crate::markdown::append_markdown;
 use crate::render::line_utils::line_to_static;
 use crate::render::line_utils::prefix_lines;
@@ -1179,6 +1180,238 @@ pub(crate) fn new_web_search_call(query: String) -> PrefixedWrappedHistoryCell {
     PrefixedWrappedHistoryCell::new(text, "• ".dim(), "  ")
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct BackgroundActivityEntry {
+    pub(crate) id: String,
+    pub(crate) command_display: String,
+}
+
+impl BackgroundActivityEntry {
+    pub(crate) fn new(id: String, command_display: String) -> Self {
+        Self {
+            id,
+            command_display,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct UnifiedExecSessionsCell {
+    sessions: Vec<BackgroundActivityEntry>,
+    hooks: Vec<BackgroundActivityEntry>,
+}
+
+impl UnifiedExecSessionsCell {
+    fn new(sessions: Vec<BackgroundActivityEntry>, hooks: Vec<BackgroundActivityEntry>) -> Self {
+        Self { sessions, hooks }
+    }
+}
+
+impl HistoryCell for UnifiedExecSessionsCell {
+    fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
+        if width == 0 {
+            return Vec::new();
+        }
+
+        let wrap_width = width as usize;
+        let max_entries = 16usize;
+        let mut out: Vec<Line<'static>> = Vec::new();
+        out.push(vec![format!("Background terminals ({})", self.sessions.len()).bold()].into());
+        out.push("".into());
+
+        if self.sessions.is_empty() {
+            out.push("  • No background terminals running.".italic().into());
+        }
+
+        let prefix = "  • ";
+        let prefix_width = UnicodeWidthStr::width(prefix);
+        let truncation_suffix = " [...]";
+        let truncation_suffix_width = UnicodeWidthStr::width(truncation_suffix);
+
+        let mut shown = 0usize;
+        for entry in &self.sessions {
+            if shown >= max_entries {
+                break;
+            }
+            let id_display = entry.id.as_str();
+            let id_width = UnicodeWidthStr::width(id_display);
+            if wrap_width <= prefix_width {
+                out.push(Line::from(prefix.dim()));
+                shown += 1;
+                continue;
+            }
+
+            let (snippet, snippet_truncated) = {
+                let command_display = entry.command_display.as_str();
+                let (first_line, has_more_lines) = match command_display.split_once('\n') {
+                    Some((first, _)) => (first, true),
+                    None => (command_display, false),
+                };
+                let max_graphemes = 80;
+                let snippet = truncate_text(first_line, max_graphemes);
+                (snippet.clone(), has_more_lines || snippet != first_line)
+            };
+
+            let budget = wrap_width.saturating_sub(prefix_width);
+            if budget <= id_width.saturating_add(1) {
+                let (truncated, _, _) = take_prefix_by_width(id_display, budget);
+                out.push(vec![prefix.dim(), truncated.magenta()].into());
+                shown += 1;
+                continue;
+            }
+
+            let mut needs_suffix = snippet_truncated;
+            let snippet_budget = budget.saturating_sub(id_width.saturating_add(1));
+            if !needs_suffix {
+                let (_, remainder, _) = take_prefix_by_width(&snippet, snippet_budget);
+                if !remainder.is_empty() {
+                    needs_suffix = true;
+                }
+            }
+
+            if needs_suffix && snippet_budget > truncation_suffix_width {
+                let available = snippet_budget.saturating_sub(truncation_suffix_width);
+                let (truncated, _, _) = take_prefix_by_width(&snippet, available);
+                out.push(
+                    vec![
+                        prefix.dim(),
+                        id_display.to_string().magenta(),
+                        " ".dim(),
+                        truncated.cyan(),
+                        truncation_suffix.dim(),
+                    ]
+                    .into(),
+                );
+            } else {
+                let (truncated, _, _) = take_prefix_by_width(&snippet, snippet_budget);
+                out.push(
+                    vec![
+                        prefix.dim(),
+                        id_display.to_string().magenta(),
+                        " ".dim(),
+                        truncated.cyan(),
+                    ]
+                    .into(),
+                );
+            }
+            shown += 1;
+        }
+
+        let remaining = self.sessions.len().saturating_sub(shown);
+        if remaining > 0 {
+            let more_text = format!("... and {remaining} more running");
+            if wrap_width <= prefix_width {
+                out.push(Line::from(prefix.dim()));
+            } else {
+                let budget = wrap_width.saturating_sub(prefix_width);
+                let (truncated, _, _) = take_prefix_by_width(&more_text, budget);
+                out.push(vec![prefix.dim(), truncated.dim()].into());
+            }
+        }
+
+        out.push("".into());
+        out.push(vec![format!("Hooks ({})", self.hooks.len()).bold()].into());
+        out.push("".into());
+
+        if self.hooks.is_empty() {
+            out.push("  • No hooks running.".italic().into());
+            return out;
+        }
+
+        let mut shown = 0usize;
+        for entry in &self.hooks {
+            if shown >= max_entries {
+                break;
+            }
+            let id_display = entry.id.as_str();
+            let id_width = UnicodeWidthStr::width(id_display);
+            if wrap_width <= prefix_width {
+                out.push(Line::from(prefix.dim()));
+                shown += 1;
+                continue;
+            }
+
+            let (snippet, snippet_truncated) = {
+                let command_display = entry.command_display.as_str();
+                let (first_line, has_more_lines) = match command_display.split_once('\n') {
+                    Some((first, _)) => (first, true),
+                    None => (command_display, false),
+                };
+                let max_graphemes = 80;
+                let snippet = truncate_text(first_line, max_graphemes);
+                (snippet.clone(), has_more_lines || snippet != first_line)
+            };
+
+            let budget = wrap_width.saturating_sub(prefix_width);
+            if budget <= id_width.saturating_add(1) {
+                let (truncated, _, _) = take_prefix_by_width(id_display, budget);
+                out.push(vec![prefix.dim(), truncated.magenta()].into());
+                shown += 1;
+                continue;
+            }
+
+            let mut needs_suffix = snippet_truncated;
+            let snippet_budget = budget.saturating_sub(id_width.saturating_add(1));
+            if !needs_suffix {
+                let (_, remainder, _) = take_prefix_by_width(&snippet, snippet_budget);
+                if !remainder.is_empty() {
+                    needs_suffix = true;
+                }
+            }
+
+            if needs_suffix && snippet_budget > truncation_suffix_width {
+                let available = snippet_budget.saturating_sub(truncation_suffix_width);
+                let (truncated, _, _) = take_prefix_by_width(&snippet, available);
+                out.push(
+                    vec![
+                        prefix.dim(),
+                        id_display.to_string().magenta(),
+                        " ".dim(),
+                        truncated.cyan(),
+                        truncation_suffix.dim(),
+                    ]
+                    .into(),
+                );
+            } else {
+                let (truncated, _, _) = take_prefix_by_width(&snippet, snippet_budget);
+                out.push(
+                    vec![
+                        prefix.dim(),
+                        id_display.to_string().magenta(),
+                        " ".dim(),
+                        truncated.cyan(),
+                    ]
+                    .into(),
+                );
+            }
+            shown += 1;
+        }
+
+        let remaining = self.hooks.len().saturating_sub(shown);
+        if remaining > 0 {
+            let more_text = format!("... and {remaining} more running");
+            if wrap_width <= prefix_width {
+                out.push(Line::from(prefix.dim()));
+            } else {
+                let budget = wrap_width.saturating_sub(prefix_width);
+                let (truncated, _, _) = take_prefix_by_width(&more_text, budget);
+                out.push(vec![prefix.dim(), truncated.dim()].into());
+            }
+        }
+
+        out
+    }
+}
+
+pub(crate) fn new_unified_exec_sessions_output(
+    sessions: Vec<BackgroundActivityEntry>,
+    hooks: Vec<BackgroundActivityEntry>,
+) -> CompositeHistoryCell {
+    let command = PlainHistoryCell::new(vec!["/ps".magenta().into()]);
+    let summary = UnifiedExecSessionsCell::new(sessions, hooks);
+    CompositeHistoryCell::new(vec![Box::new(command), Box::new(summary)])
+}
+
 /// If the first content is an image, return a new cell with the image.
 /// TODO(rgwood-dd): Handle images properly even if they're not the first result.
 fn try_new_completed_mcp_tool_call_with_image_output(
@@ -1913,6 +2146,46 @@ mod tests {
         );
         let rendered = render_lines(&cell.display_lines(120)).join("\n");
 
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn ps_output_empty_snapshot() {
+        let cell = new_unified_exec_sessions_output(Vec::new(), Vec::new());
+        let rendered = render_lines(&cell.display_lines(120)).join("\n");
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn ps_output_many_sessions_snapshot() {
+        let sessions = (0..20)
+            .map(|idx| {
+                BackgroundActivityEntry::new(format!("proc-{idx}"), format!("command {idx}"))
+            })
+            .collect();
+        let cell = new_unified_exec_sessions_output(sessions, Vec::new());
+        let rendered = render_lines(&cell.display_lines(120)).join("\n");
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn ps_output_hooks_snapshot() {
+        let sessions = vec![
+            BackgroundActivityEntry::new("proc-1".to_string(), "rg \"foo\" src".to_string()),
+            BackgroundActivityEntry::new("proc-2".to_string(), "sleep 10".to_string()),
+        ];
+        let hooks = vec![
+            BackgroundActivityEntry::new(
+                "hook-1".to_string(),
+                "agent-turn-complete · ~/.codex/hooks/notify.sh".to_string(),
+            ),
+            BackgroundActivityEntry::new(
+                "hook-2".to_string(),
+                "approval-requested · ~/.codex/hooks/log.sh".to_string(),
+            ),
+        ];
+        let cell = new_unified_exec_sessions_output(sessions, hooks);
+        let rendered = render_lines(&cell.display_lines(120)).join("\n");
         insta::assert_snapshot!(rendered);
     }
 

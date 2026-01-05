@@ -30,12 +30,15 @@ pub enum SlashCommand {
     Settings,
     StatusMenu,
     Worktree,
+    Hooks,
     Mcp,
     Logout,
     Quit,
     Exit,
     Feedback,
     Rollout,
+    Ps,
+    PsKill,
     TestApproval,
 }
 
@@ -48,6 +51,7 @@ impl SlashCommand {
             SlashCommand::Init => "create an AGENTS.md file with instructions for xcodex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
             SlashCommand::Autocompact => "toggle automatic conversation compaction (persists)",
+            SlashCommand::Thoughts => "toggle showing agent thoughts/reasoning (persists)",
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Resume => "resume a saved chat",
             // SlashCommand::Undo => "ask Codex to undo a turn",
@@ -60,7 +64,9 @@ impl SlashCommand {
             SlashCommand::Settings => "open the status/settings menu",
             SlashCommand::StatusMenu => "open the status/settings menu (alias)",
             SlashCommand::Worktree => "switch this session to a different git worktree",
-            SlashCommand::Thoughts => "toggle showing agent thoughts/reasoning (persists)",
+            SlashCommand::Hooks => "learn how to automate xcodex with hooks",
+            SlashCommand::Ps => "list background terminals",
+            SlashCommand::PsKill => "terminate background terminals",
             SlashCommand::Model => "choose what model and reasoning effort to use",
             SlashCommand::Approvals => "choose what xcodex can do without approval",
             SlashCommand::Mcp => "list configured MCP tools",
@@ -97,11 +103,14 @@ impl SlashCommand {
             | SlashCommand::Settings
             | SlashCommand::StatusMenu
             | SlashCommand::Worktree
-            | SlashCommand::Thoughts
+            | SlashCommand::Hooks
+            | SlashCommand::Ps
+            | SlashCommand::PsKill
             | SlashCommand::Mcp
             | SlashCommand::Feedback
             | SlashCommand::Quit
             | SlashCommand::Exit => true,
+            SlashCommand::Thoughts => true,
             SlashCommand::Rollout => true,
             SlashCommand::TestApproval => true,
         }

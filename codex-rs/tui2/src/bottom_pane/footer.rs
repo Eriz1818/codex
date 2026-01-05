@@ -4,6 +4,7 @@ use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::render::line_utils::prefix_lines;
 use crate::status::format_tokens_compact;
+use crate::transcript_copy_action::TranscriptCopyFeedback;
 use crate::ui_consts::FOOTER_INDENT_COLS;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
@@ -28,6 +29,7 @@ pub(crate) struct FooterProps<'a> {
     pub(crate) transcript_copy_selection_key: KeyBinding,
     pub(crate) composer_has_text: bool,
     pub(crate) composer_copy_key: KeyBinding,
+    pub(crate) transcript_copy_feedback: Option<TranscriptCopyFeedback>,
     pub(crate) status_bar_git_branch: Option<&'a str>,
     pub(crate) status_bar_worktree: Option<&'a str>,
     pub(crate) show_status_bar_git_branch: bool,
@@ -86,18 +88,55 @@ pub(crate) fn render_footer(area: Rect, buf: &mut Buffer, props: FooterProps<'_>
 }
 
 fn footer_lines(props: FooterProps<'_>) -> Vec<Line<'static>> {
+    fn apply_copy_feedback(lines: &mut [Line<'static>], feedback: Option<TranscriptCopyFeedback>) {
+        let Some(line) = lines.first_mut() else {
+            return;
+        };
+        let Some(feedback) = feedback else {
+            return;
+        };
+
+        line.push_span(" · ".dim());
+        match feedback {
+            TranscriptCopyFeedback::Copied => line.push_span("Copied".green().bold()),
+            TranscriptCopyFeedback::Failed => line.push_span("Copy failed".red().bold()),
+        }
+    }
+
+    fn apply_status_bar_items(lines: &mut [Line<'static>], props: FooterProps<'_>) {
+        if matches!(props.mode, FooterMode::ShortcutOverlay) {
+            return;
+        }
+
+        let Some(line) = lines.first_mut() else {
+            return;
+        };
+
+        if props.show_status_bar_git_branch
+            && let Some(branch) = props.status_bar_git_branch
+        {
+            line.push_span(" · ".dim());
+            line.push_span("branch: ".dim());
+            line.push_span(branch.to_owned().cyan());
+        }
+
+        if props.show_status_bar_worktree
+            && let Some(worktree) = props.status_bar_worktree
+        {
+            line.push_span(" · ".dim());
+            line.push_span("wt: ".dim());
+            line.push_span(worktree.to_owned().dim());
+        }
+    }
+
     // Show the context indicator on the left, appended after the primary hint
     // (e.g., "? for shortcuts"). Keep it visible even when typing (i.e., when
     // the shortcut hint is hidden). Hide it only for the multi-line
     // ShortcutOverlay.
-    match props.mode {
-        FooterMode::CtrlCReminder => {
-            let mut line = ctrl_c_reminder_line(CtrlCReminderState {
-                is_task_running: props.is_task_running,
-            });
-            append_status_bar_items(&mut line, props);
-            vec![line]
-        }
+    let mut lines = match props.mode {
+        FooterMode::CtrlCReminder => vec![ctrl_c_reminder_line(CtrlCReminderState {
+            is_task_running: props.is_task_running,
+        })],
         FooterMode::ShortcutSummary => {
             let mut line = context_window_line(
                 props.context_window_percent,
@@ -126,7 +165,7 @@ fn footer_lines(props: FooterProps<'_>) -> Vec<Line<'static>> {
                 line.push_span(" jump".dim());
                 if let Some((current, total)) = props.transcript_scroll_position {
                     line.push_span(" · ".dim());
-                    line.push_span(Span::from(format!("{current}/{total}")).dim());
+                    line.push_span(format!("{current}/{total}").dim());
                 }
             }
             if props.transcript_selection_active {
@@ -134,7 +173,6 @@ fn footer_lines(props: FooterProps<'_>) -> Vec<Line<'static>> {
                 line.push_span(props.transcript_copy_selection_key);
                 line.push_span(" copy selection".dim());
             }
-            append_status_bar_items(&mut line, props);
             vec![line]
         }
         FooterMode::ShortcutOverlay => {
@@ -150,11 +188,7 @@ fn footer_lines(props: FooterProps<'_>) -> Vec<Line<'static>> {
             };
             shortcut_overlay_lines(state)
         }
-        FooterMode::EscHint => {
-            let mut line = esc_hint_line(props.esc_backtrack_hint);
-            append_status_bar_items(&mut line, props);
-            vec![line]
-        }
+        FooterMode::EscHint => vec![esc_hint_line(props.esc_backtrack_hint)],
         FooterMode::ContextOnly => {
             let mut line = context_window_line(
                 props.context_window_percent,
@@ -165,28 +199,13 @@ fn footer_lines(props: FooterProps<'_>) -> Vec<Line<'static>> {
                 line.push_span(props.composer_copy_key);
                 line.push_span(" copy prompt".dim());
             }
-            append_status_bar_items(&mut line, props);
             vec![line]
         }
-    }
-}
+    };
 
-fn append_status_bar_items(line: &mut Line<'static>, props: FooterProps<'_>) {
-    if props.show_status_bar_git_branch
-        && let Some(branch) = props.status_bar_git_branch
-    {
-        line.push_span(" · ".dim());
-        line.push_span("branch: ".dim());
-        line.push_span(Span::from(branch.to_string()).cyan());
-    }
-
-    if props.show_status_bar_worktree
-        && let Some(worktree) = props.status_bar_worktree
-    {
-        line.push_span(" · ".dim());
-        line.push_span("wt: ".dim());
-        line.push_span(Span::from(worktree.to_string()).dim());
-    }
+    apply_copy_feedback(&mut lines, props.transcript_copy_feedback);
+    apply_status_bar_items(&mut lines, props);
+    lines
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -502,7 +521,7 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    fn snapshot_footer(name: &str, props: FooterProps) {
+    fn snapshot_footer(name: &str, props: FooterProps<'_>) {
         let height = footer_height(props).max(1);
         let mut terminal = Terminal::new(TestBackend::new(80, height)).unwrap();
         terminal
@@ -531,6 +550,7 @@ mod tests {
                 transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
                 composer_has_text: false,
                 composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
                 status_bar_git_branch: None,
                 status_bar_worktree: None,
                 show_status_bar_git_branch: false,
@@ -553,6 +573,7 @@ mod tests {
                 transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
                 composer_has_text: false,
                 composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
                 status_bar_git_branch: None,
                 status_bar_worktree: None,
                 show_status_bar_git_branch: false,
@@ -575,6 +596,7 @@ mod tests {
                 transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
                 composer_has_text: false,
                 composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
                 status_bar_git_branch: None,
                 status_bar_worktree: None,
                 show_status_bar_git_branch: false,
@@ -597,6 +619,7 @@ mod tests {
                 transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
                 composer_has_text: false,
                 composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
                 status_bar_git_branch: None,
                 status_bar_worktree: None,
                 show_status_bar_git_branch: false,
@@ -619,6 +642,7 @@ mod tests {
                 transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
                 composer_has_text: false,
                 composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
                 status_bar_git_branch: None,
                 status_bar_worktree: None,
                 show_status_bar_git_branch: false,
@@ -641,6 +665,7 @@ mod tests {
                 transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
                 composer_has_text: false,
                 composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
                 status_bar_git_branch: None,
                 status_bar_worktree: None,
                 show_status_bar_git_branch: false,
@@ -663,6 +688,7 @@ mod tests {
                 transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
                 composer_has_text: false,
                 composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
                 status_bar_git_branch: None,
                 status_bar_worktree: None,
                 show_status_bar_git_branch: false,
@@ -685,6 +711,7 @@ mod tests {
                 transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
                 composer_has_text: false,
                 composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
                 status_bar_git_branch: None,
                 status_bar_worktree: None,
                 show_status_bar_git_branch: false,
@@ -707,10 +734,57 @@ mod tests {
                 transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
                 composer_has_text: false,
                 composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
                 status_bar_git_branch: None,
                 status_bar_worktree: None,
                 show_status_bar_git_branch: false,
                 show_status_bar_worktree: false,
+            },
+        );
+
+        snapshot_footer(
+            "footer_copy_feedback_copied",
+            FooterProps {
+                mode: FooterMode::ShortcutSummary,
+                esc_backtrack_hint: false,
+                use_shift_enter_hint: false,
+                is_task_running: false,
+                context_window_percent: None,
+                context_window_used_tokens: None,
+                transcript_scrolled: false,
+                transcript_selection_active: false,
+                transcript_scroll_position: None,
+                transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
+                composer_has_text: false,
+                composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: Some(TranscriptCopyFeedback::Copied),
+                status_bar_git_branch: None,
+                status_bar_worktree: None,
+                show_status_bar_git_branch: false,
+                show_status_bar_worktree: false,
+            },
+        );
+
+        snapshot_footer(
+            "footer_status_bar_git_context",
+            FooterProps {
+                mode: FooterMode::ShortcutSummary,
+                esc_backtrack_hint: false,
+                use_shift_enter_hint: false,
+                is_task_running: false,
+                context_window_percent: Some(72),
+                context_window_used_tokens: None,
+                transcript_scrolled: false,
+                transcript_selection_active: false,
+                transcript_scroll_position: None,
+                transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
+                composer_has_text: false,
+                composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+                transcript_copy_feedback: None,
+                status_bar_git_branch: Some("feature-branch"),
+                status_bar_worktree: Some("/repo"),
+                show_status_bar_git_branch: true,
+                show_status_bar_worktree: true,
             },
         );
     }

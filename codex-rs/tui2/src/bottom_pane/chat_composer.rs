@@ -1,6 +1,7 @@
 use crate::key_hint;
 use crate::key_hint::KeyBinding;
 use crate::key_hint::has_ctrl_or_alt;
+use crate::transcript_copy_action::TranscriptCopyFeedback;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -95,6 +96,9 @@ enum PromptSelectionAction {
 }
 
 pub(crate) struct ChatComposer {
+    // Merge resolution (2026-01-05): combined upstream `transcript_copy_feedback` plumbing with
+    // xCodex status-bar git context (branch/worktree). This is already present post-merge; do not
+    // reapply in the reapply-features branch.
     textarea: TextArea,
     textarea_state: RefCell<TextAreaState>,
     active_popup: ActivePopup,
@@ -124,6 +128,7 @@ pub(crate) struct ChatComposer {
     transcript_selection_active: bool,
     transcript_scroll_position: Option<(usize, usize)>,
     transcript_copy_selection_key: KeyBinding,
+    transcript_copy_feedback: Option<TranscriptCopyFeedback>,
     status_bar_git_branch: Option<String>,
     status_bar_worktree: Option<String>,
     show_status_bar_git_branch: bool,
@@ -180,6 +185,7 @@ impl ChatComposer {
             transcript_selection_active: false,
             transcript_scroll_position: None,
             transcript_copy_selection_key: key_hint::ctrl_shift(KeyCode::Char('c')),
+            transcript_copy_feedback: None,
             status_bar_git_branch: None,
             status_bar_worktree: None,
             show_status_bar_git_branch: false,
@@ -1609,6 +1615,7 @@ impl ChatComposer {
             transcript_copy_selection_key: self.transcript_copy_selection_key,
             composer_has_text: !self.is_empty(),
             composer_copy_key: key_hint::ctrl(KeyCode::Char('k')),
+            transcript_copy_feedback: self.transcript_copy_feedback,
             status_bar_git_branch: self.status_bar_git_branch.as_deref(),
             status_bar_worktree: self.status_bar_worktree.as_deref(),
             show_status_bar_git_branch: self.show_status_bar_git_branch,
@@ -1645,11 +1652,23 @@ impl ChatComposer {
         selection_active: bool,
         scroll_position: Option<(usize, usize)>,
         copy_selection_key: KeyBinding,
-    ) {
+        copy_feedback: Option<TranscriptCopyFeedback>,
+    ) -> bool {
+        if self.transcript_scrolled == scrolled
+            && self.transcript_selection_active == selection_active
+            && self.transcript_scroll_position == scroll_position
+            && self.transcript_copy_selection_key == copy_selection_key
+            && self.transcript_copy_feedback == copy_feedback
+        {
+            return false;
+        }
+
         self.transcript_scrolled = scrolled;
         self.transcript_selection_active = selection_active;
         self.transcript_scroll_position = scroll_position;
         self.transcript_copy_selection_key = copy_selection_key;
+        self.transcript_copy_feedback = copy_feedback;
+        true
     }
 
     fn sync_popups(&mut self) {

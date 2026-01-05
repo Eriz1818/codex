@@ -8,12 +8,14 @@ use codex_core::compact::SUMMARIZATION_PROMPT;
 use codex_core::compact::SUMMARY_PREFIX;
 use codex_core::config::Config;
 use codex_core::features::Feature;
-use codex_core::protocol::CodexErrorInfo;
+use codex_core::protocol::AskForApproval;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
 use codex_core::protocol::RolloutItem;
 use codex_core::protocol::RolloutLine;
+use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::WarningEvent;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::user_input::UserInput;
 use core_test_support::load_default_config_for_test;
 use core_test_support::responses::ev_local_shell_call;
@@ -159,6 +161,7 @@ async fn summarize_context_three_requests_and_instructions() {
             items: vec![UserInput::Text {
                 text: "hello world".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -179,6 +182,7 @@ async fn summarize_context_three_requests_and_instructions() {
             items: vec![UserInput::Text {
                 text: THIRD_USER_MSG.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -583,6 +587,7 @@ async fn multiple_auto_compact_per_task_runs_after_token_limit_hit() {
             items: vec![UserInput::Text {
                 text: user_message.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .expect("submit user input");
@@ -1092,6 +1097,7 @@ async fn auto_compact_runs_after_token_limit_hit() {
             items: vec![UserInput::Text {
                 text: FIRST_AUTO_MSG.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1103,6 +1109,7 @@ async fn auto_compact_runs_after_token_limit_hit() {
             items: vec![UserInput::Text {
                 text: SECOND_AUTO_MSG.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1114,6 +1121,7 @@ async fn auto_compact_runs_after_token_limit_hit() {
             items: vec![UserInput::Text {
                 text: POST_AUTO_USER_MSG.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1240,86 +1248,113 @@ async fn auto_compact_runs_after_token_limit_hit() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn auto_compact_disabled_by_default_stops_when_context_is_full() {
+async fn auto_compact_runs_after_resume_when_token_usage_is_over_limit() {
     skip_if_no_network!();
 
     let server = start_mock_server().await;
 
-    let context_window = 100;
-    let over_limit_tokens = context_window * 95 / 100 + 1;
+    let limit = 200_000;
+    let over_limit_tokens = 250_000;
+    let remote_summary = "REMOTE_COMPACT_SUMMARY";
 
-    let sse1 = sse(vec![
-        ev_assistant_message("m1", FIRST_REPLY),
-        ev_completed_with_tokens("r1", 50),
-    ]);
-    let sse2 = sse(vec![
-        ev_assistant_message("m2", SECOND_LARGE_REPLY),
-        ev_completed_with_tokens("r2", over_limit_tokens),
-    ]);
-    mount_sse_sequence(&server, vec![sse1, sse2]).await;
+    let compacted_history = vec![
+        codex_protocol::models::ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![codex_protocol::models::ContentItem::OutputText {
+                text: remote_summary.to_string(),
+            }],
+        },
+        codex_protocol::models::ResponseItem::Compaction {
+            encrypted_content: "ENCRYPTED_COMPACTION_SUMMARY".to_string(),
+        },
+    ];
+    let compact_mock =
+        mount_compact_json_once(&server, serde_json::json!({ "output": compacted_history })).await;
 
-    let model_provider = non_openai_model_provider(&server);
+    let mut builder = test_codex().with_config(move |config| {
+        set_test_compact_prompt(config);
+        config.model_auto_compact_token_limit = Some(limit);
+        config.features.enable(Feature::RemoteCompaction);
+    });
+    let initial = builder.build(&server).await.unwrap();
+    let home = initial.home.clone();
+    let rollout_path = initial.session_configured.rollout_path.clone();
 
-    let home = TempDir::new().unwrap();
-    let mut config = load_default_config_for_test(&home).await;
-    config.model_provider = model_provider;
-    config.model_context_window = Some(context_window);
-    config.model_auto_compact_token_limit = Some(90);
-
-    let codex = ConversationManager::with_models_provider(
-        CodexAuth::from_api_key("dummy"),
-        config.model_provider.clone(),
+    // A single over-limit completion should not auto-compact until the next user message.
+    mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("m1", FIRST_REPLY),
+            ev_completed_with_tokens("r1", over_limit_tokens),
+        ]),
     )
-    .new_conversation(config)
-    .await
-    .unwrap()
-    .conversation;
+    .await;
+    initial.submit_turn("OVER_LIMIT_TURN").await.unwrap();
 
-    codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "first turn".into(),
-            }],
-        })
-        .await
-        .unwrap();
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
-
-    codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "second turn".into(),
-            }],
-        })
-        .await
-        .unwrap();
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
-
-    // Auto-compact is disabled by default, so once we hit a full context window the next turn
-    // should short-circuit without issuing a request.
-    codex
-        .submit(Op::UserInput {
-            items: vec![UserInput::Text {
-                text: "third turn".into(),
-            }],
-        })
-        .await
-        .unwrap();
-
-    let event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Error(_))).await;
-    let EventMsg::Error(err) = event else {
-        unreachable!();
-    };
-    assert_eq!(
-        err.codex_error_info,
-        Some(CodexErrorInfo::ContextWindowExceeded)
+    assert!(
+        compact_mock.requests().is_empty(),
+        "remote compaction should not run before the next user message"
     );
 
-    let requests = get_responses_requests(&server).await;
+    let mut resume_builder = test_codex().with_config(move |config| {
+        set_test_compact_prompt(config);
+        config.model_auto_compact_token_limit = Some(limit);
+        config.features.enable(Feature::RemoteCompaction);
+    });
+    let resumed = resume_builder
+        .resume(&server, home, rollout_path)
+        .await
+        .unwrap();
+
+    let follow_up_user = "AFTER_RESUME_USER";
+    let sse_follow_up = sse(vec![
+        ev_assistant_message("m2", FINAL_REPLY),
+        ev_completed("r2"),
+    ]);
+
+    let follow_up_matcher = move |req: &wiremock::Request| {
+        let body = std::str::from_utf8(&req.body).unwrap_or("");
+        body.contains(follow_up_user) && body.contains(remote_summary)
+    };
+    mount_sse_once_match(&server, follow_up_matcher, sse_follow_up).await;
+
+    resumed
+        .codex
+        .submit(Op::UserTurn {
+            items: vec![UserInput::Text {
+                text: follow_up_user.into(),
+            }],
+            final_output_json_schema: None,
+            cwd: resumed.cwd.path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            model: resumed.session_configured.model.clone(),
+            effort: None,
+            summary: ReasoningSummary::Auto,
+        })
+        .await
+        .unwrap();
+
+    wait_for_event(&resumed.codex, |event| {
+        matches!(event, EventMsg::ContextCompacted(_))
+    })
+    .await;
+    wait_for_event(&resumed.codex, |event| {
+        matches!(event, EventMsg::TaskComplete(_))
+    })
+    .await;
+
+    let compact_requests = compact_mock.requests();
     assert_eq!(
-        requests.len(),
-        2,
-        "expected only the first two turns to hit the model"
+        compact_requests.len(),
+        1,
+        "remote compaction should run once after resume"
+    );
+    assert_eq!(
+        compact_requests[0].path(),
+        "/v1/responses/compact",
+        "remote compaction should hit the compact endpoint"
     );
 }
 
@@ -1404,6 +1439,7 @@ async fn auto_compact_persists_rollout_entries() {
             items: vec![UserInput::Text {
                 text: FIRST_AUTO_MSG.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1414,6 +1450,7 @@ async fn auto_compact_persists_rollout_entries() {
             items: vec![UserInput::Text {
                 text: SECOND_AUTO_MSG.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1424,6 +1461,7 @@ async fn auto_compact_persists_rollout_entries() {
             items: vec![UserInput::Text {
                 text: POST_AUTO_USER_MSG.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1515,6 +1553,7 @@ async fn manual_compact_retries_after_context_window_error() {
             items: vec![UserInput::Text {
                 text: "first turn".into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1647,6 +1686,7 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
             items: vec![UserInput::Text {
                 text: first_user_message.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1660,6 +1700,7 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
             items: vec![UserInput::Text {
                 text: second_user_message.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1673,6 +1714,7 @@ async fn manual_compact_twice_preserves_latest_user_messages() {
             items: vec![UserInput::Text {
                 text: final_user_message.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1857,6 +1899,7 @@ async fn auto_compact_allows_multiple_attempts_when_interleaved_with_other_turn_
         codex
             .submit(Op::UserInput {
                 items: vec![UserInput::Text { text: user.into() }],
+                final_output_json_schema: None,
             })
             .await
             .unwrap();
@@ -1974,6 +2017,7 @@ async fn auto_compact_triggers_after_function_call_over_95_percent_usage() {
             items: vec![UserInput::Text {
                 text: FUNCTION_CALL_LIMIT_MSG.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -1985,6 +2029,7 @@ async fn auto_compact_triggers_after_function_call_over_95_percent_usage() {
             items: vec![UserInput::Text {
                 text: follow_up_user.into(),
             }],
+            final_output_json_schema: None,
         })
         .await
         .unwrap();
@@ -2104,6 +2149,7 @@ async fn auto_compact_counts_encrypted_reasoning_before_last_user() {
         codex
             .submit(Op::UserInput {
                 items: vec![UserInput::Text { text: user.into() }],
+                final_output_json_schema: None,
             })
             .await
             .unwrap();

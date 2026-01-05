@@ -374,10 +374,6 @@ impl App {
         }
 
         let enhanced_keys_supported = tui.enhanced_keys_supported();
-        let model_family = conversation_manager
-            .get_models_manager()
-            .construct_model_family(model.as_str(), &config)
-            .await;
         let mut chat_widget = match resume_selection {
             ResumeSelection::StartFresh | ResumeSelection::Exit => {
                 let init = crate::chatwidget::ChatWidgetInit {
@@ -391,7 +387,7 @@ impl App {
                     models_manager: conversation_manager.get_models_manager(),
                     feedback: feedback.clone(),
                     is_first_run,
-                    model_family: model_family.clone(),
+                    model: model.clone(),
                 };
                 ChatWidget::new(init, conversation_manager.clone())
             }
@@ -406,6 +402,8 @@ impl App {
                     .wrap_err_with(|| {
                         format!("Failed to resume session from {}", path.display())
                     })?;
+                let resumed_model = resumed.session_configured.model.clone();
+                model = resumed_model.clone();
                 let init = crate::chatwidget::ChatWidgetInit {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
@@ -417,13 +415,12 @@ impl App {
                     models_manager: conversation_manager.get_models_manager(),
                     feedback: feedback.clone(),
                     is_first_run,
-                    model_family: model_family.clone(),
+                    model: resumed_model,
                 };
                 ChatWidget::new_from_existing(
                     init,
                     resumed.conversation,
                     resumed.session_configured,
-                    false,
                 )
             }
         };
@@ -586,7 +583,7 @@ impl App {
                     models_manager: self.server.get_models_manager(),
                     feedback: self.feedback.clone(),
                     is_first_run: false,
-                    model_family: model_family.clone(),
+                    model: self.current_model.clone(),
                 };
                 self.chat_widget = ChatWidget::new(init, self.server.clone());
                 self.current_model = model_family.get_model_slug().to_string();
@@ -624,6 +621,7 @@ impl App {
                             .await
                         {
                             Ok(resumed) => {
+                                let resumed_model = resumed.session_configured.model.clone();
                                 self.shutdown_current_conversation().await;
                                 let init = crate::chatwidget::ChatWidgetInit {
                                     config: self.config.clone(),
@@ -636,15 +634,14 @@ impl App {
                                     models_manager: self.server.get_models_manager(),
                                     feedback: self.feedback.clone(),
                                     is_first_run: false,
-                                    model_family: model_family.clone(),
+                                    model: resumed_model.clone(),
                                 };
                                 self.chat_widget = ChatWidget::new_from_existing(
                                     init,
                                     resumed.conversation,
                                     resumed.session_configured,
-                                    true,
                                 );
-                                self.current_model = model_family.get_model_slug().to_string();
+                                self.current_model = resumed_model;
                                 if let Some(summary) = summary {
                                     let mut lines: Vec<Line<'static>> =
                                         vec![summary.usage_line.clone().into()];
@@ -960,12 +957,7 @@ impl App {
                 self.on_update_reasoning_effort(effort);
             }
             AppEvent::UpdateModel(model) => {
-                let model_family = self
-                    .server
-                    .get_models_manager()
-                    .construct_model_family(&model, &self.config)
-                    .await;
-                self.chat_widget.set_model(&model, model_family);
+                self.chat_widget.set_model(&model);
                 self.current_model = model;
             }
             AppEvent::UpdateHideAgentReasoning(hide) => {
@@ -1687,7 +1679,7 @@ mod tests {
     async fn make_test_app() -> App {
         let (chat_widget, app_event_tx, _rx, _op_rx) = make_chatwidget_manual_with_sender().await;
         let config = chat_widget.config_ref().clone();
-        let current_model = chat_widget.get_model_family().get_model_slug().to_string();
+        let current_model = "gpt-5.2-codex".to_string();
         let server = Arc::new(ConversationManager::with_models_provider(
             CodexAuth::from_api_key("Test API Key"),
             config.model_provider.clone(),
@@ -1727,7 +1719,7 @@ mod tests {
     ) {
         let (chat_widget, app_event_tx, rx, op_rx) = make_chatwidget_manual_with_sender().await;
         let config = chat_widget.config_ref().clone();
-        let current_model = chat_widget.get_model_family().get_model_slug().to_string();
+        let current_model = "gpt-5.2-codex".to_string();
         let server = Arc::new(ConversationManager::with_models_provider(
             CodexAuth::from_api_key("Test API Key"),
             config.model_provider.clone(),

@@ -31,6 +31,7 @@ pub enum SlashCommand {
     Settings,
     StatusMenu,
     Worktree,
+    Hooks,
     Mcp,
     Logout,
     Quit,
@@ -64,6 +65,7 @@ impl SlashCommand {
             SlashCommand::Settings => "open the status/settings menu",
             SlashCommand::StatusMenu => "open the status/settings menu (alias)",
             SlashCommand::Worktree => "switch this session to a different git worktree",
+            SlashCommand::Hooks => "learn how to automate xcodex with hooks",
             SlashCommand::Ps => "list background terminals",
             SlashCommand::PsKill => "terminate background terminals",
             SlashCommand::Model => "choose what model and reasoning effort to use",
@@ -104,6 +106,7 @@ impl SlashCommand {
             | SlashCommand::Settings
             | SlashCommand::StatusMenu
             | SlashCommand::Worktree
+            | SlashCommand::Hooks
             | SlashCommand::Ps
             | SlashCommand::PsKill
             | SlashCommand::Mcp

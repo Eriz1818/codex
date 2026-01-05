@@ -350,8 +350,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
                     }
                 })
                 .or(root_prompt);
-            let prompt_text =
-                resolve_prompt(prompt_arg, args.prompt_file.clone().or(root_prompt_file));
+            let prompt_text = resolve_prompt(prompt_arg, args.prompt_file.or(root_prompt_file));
             let mut items: Vec<UserInput> = imgs
                 .into_iter()
                 .map(|path| UserInput::LocalImage { path })
@@ -715,6 +714,35 @@ mod tests {
             .expect("resolve");
 
         assert_eq!(prompt, "piped");
+    }
+
+    #[test]
+    fn resolves_large_prompt_from_stdin_when_piped() {
+        let size = 1_000_000;
+        let payload = "a".repeat(size) + "\n";
+
+        let prompt =
+            resolve_prompt_inner(None, None, || false, || Ok(payload.clone())).expect("resolve");
+
+        assert_eq!(prompt.len(), payload.len());
+        assert_eq!(prompt, payload);
+    }
+
+    #[test]
+    fn resolves_large_prompt_from_stdin_via_file_dash() {
+        let size = 1_000_000;
+        let payload = "a".repeat(size) + "\n";
+
+        let prompt = resolve_prompt_inner(
+            None,
+            Some(PathBuf::from("-")),
+            || true,
+            || Ok(payload.clone()),
+        )
+        .expect("resolve");
+
+        assert_eq!(prompt.len(), payload.len());
+        assert_eq!(prompt, payload);
     }
 
     #[test]

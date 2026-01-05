@@ -18,7 +18,6 @@ use codex_core::git_info::GitWorktreeEntry;
 use codex_core::git_info::current_branch_name;
 use codex_core::git_info::local_git_branches;
 use codex_core::models_manager::manager::ModelsManager;
-use codex_core::models_manager::model_family::ModelFamily;
 use codex_core::project_doc::DEFAULT_PROJECT_DOC_FILENAME;
 use codex_core::protocol::AgentMessageDeltaEvent;
 use codex_core::protocol::AgentMessageEvent;
@@ -304,7 +303,7 @@ pub(crate) struct ChatWidgetInit {
     pub(crate) models_manager: Arc<ModelsManager>,
     pub(crate) feedback: codex_feedback::CodexFeedback,
     pub(crate) is_first_run: bool,
-    pub(crate) model_family: ModelFamily,
+    pub(crate) model: String,
 }
 
 #[derive(Default)]
@@ -329,7 +328,7 @@ pub(crate) struct ChatWidget {
     bottom_pane: BottomPane,
     active_cell: Option<Box<dyn HistoryCell>>,
     config: Config,
-    model_family: ModelFamily,
+    model: String,
     auth_manager: Arc<AuthManager>,
     models_manager: Arc<ModelsManager>,
     session_header: SessionHeader,
@@ -380,7 +379,7 @@ pub(crate) struct ChatWidget {
     frame_requester: FrameRequester,
     // Whether to include the initial welcome banner on session configured
     show_welcome_banner: bool,
-    // When resuming an existing session (selected via resume picker), avoid an
+    // When resuming an existing session (selected via resume picker or backtrack fork), avoid an
     // immediate redraw on SessionConfigured to prevent a gratuitous UI flicker.
     suppress_session_configured_redraw: bool,
     // User messages queued while a turn is in progress
@@ -756,12 +755,10 @@ impl ChatWidget {
     }
 
     fn context_remaining_percent(&self, info: &TokenUsageInfo) -> Option<i64> {
-        info.model_context_window
-            .or(self.model_family.context_window)
-            .map(|window| {
-                info.last_token_usage
-                    .percent_of_context_window_remaining(window)
-            })
+        info.model_context_window.map(|window| {
+            info.last_token_usage
+                .percent_of_context_window_remaining(window)
+        })
     }
 
     fn context_used_tokens(&self, info: &TokenUsageInfo, percent_known: bool) -> Option<i64> {
@@ -835,7 +832,7 @@ impl ChatWidget {
 
             if high_usage
                 && !self.rate_limit_switch_prompt_hidden()
-                && self.model_family.get_model_slug() != NUDGE_MODEL_SLUG
+                && self.model != NUDGE_MODEL_SLUG
                 && !matches!(
                     self.rate_limit_switch_prompt,
                     RateLimitSwitchPromptState::Shown
@@ -869,9 +866,6 @@ impl ChatWidget {
         self.last_unified_wait = None;
         self.stream_controller = None;
         self.maybe_show_pending_rate_limit_prompt();
-    }
-    pub(crate) fn get_model_family(&self) -> ModelFamily {
-        self.model_family.clone()
     }
 
     fn on_error(&mut self, message: String) {
@@ -1749,11 +1743,10 @@ impl ChatWidget {
             models_manager,
             feedback,
             is_first_run,
-            model_family,
+            model,
         } = common;
-        let model_slug = model_family.get_model_slug().to_string();
         let mut config = config;
-        config.model = Some(model_slug.clone());
+        config.model = Some(model.clone());
         let mut rng = rand::rng();
         let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
         let codex_op_tx = spawn_agent(config.clone(), app_event_tx.clone(), conversation_manager);
@@ -1776,10 +1769,10 @@ impl ChatWidget {
             }),
             active_cell: None,
             config,
-            model_family,
+            model: model.clone(),
             auth_manager,
             models_manager,
-            session_header: SessionHeader::new(model_slug),
+            session_header: SessionHeader::new(model),
             initial_user_message: create_initial_user_message(
                 initial_prompt.unwrap_or_default(),
                 initial_images,
@@ -1851,9 +1844,6 @@ impl ChatWidget {
         common: ChatWidgetInit,
         conversation: std::sync::Arc<codex_core::CodexConversation>,
         session_configured: codex_core::protocol::SessionConfiguredEvent,
-        // If true, `on_session_configured` will not call `request_redraw()`.
-        // Callers should schedule a frame once the first history cell is processed.
-        suppress_session_configured_redraw: bool,
     ) -> Self {
         let ChatWidgetInit {
             config,
@@ -1865,10 +1855,11 @@ impl ChatWidget {
             auth_manager,
             models_manager,
             feedback,
-            model_family,
             ..
         } = common;
-        let model_slug = model_family.get_model_slug().to_string();
+        let model = session_configured.model.clone();
+        let mut config = config;
+        config.model = Some(model.clone());
         let mut rng = rand::rng();
         let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
 
@@ -1893,10 +1884,10 @@ impl ChatWidget {
             }),
             active_cell: None,
             config,
-            model_family,
+            model: model.clone(),
             auth_manager,
             models_manager,
-            session_header: SessionHeader::new(model_slug),
+            session_header: SessionHeader::new(model),
             initial_user_message: create_initial_user_message(
                 initial_prompt.unwrap_or_default(),
                 initial_images,
@@ -1940,7 +1931,7 @@ impl ChatWidget {
             conversation_id: None,
             queued_user_messages: VecDeque::new(),
             show_welcome_banner: false,
-            suppress_session_configured_redraw,
+            suppress_session_configured_redraw: true,
             pending_notification: None,
             is_review_mode: false,
             pre_review_token_info: None,
@@ -2278,6 +2269,9 @@ impl ChatWidget {
                 } else {
                     self.open_worktree_picker();
                 }
+            }
+            SlashCommand::Hooks => {
+                self.add_hooks_output();
             }
             SlashCommand::Ps => {
                 self.add_ps_output();
@@ -3343,7 +3337,10 @@ impl ChatWidget {
         }
 
         self.codex_op_tx
-            .send(Op::UserInput { items })
+            .send(Op::UserInput {
+                items,
+                final_output_json_schema: None,
+            })
             .unwrap_or_else(|e| {
                 tracing::error!("failed to send message: {e}");
             });
@@ -3633,47 +3630,42 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    pub(crate) fn status_output_cell(&self) -> Box<dyn HistoryCell> {
+    pub(crate) fn add_status_output(&mut self) {
         let default_usage = TokenUsage::default();
-        let (total_usage, context_usage) = if let Some(ti) = &self.token_info {
-            (&ti.total_token_usage, Some(&ti.last_token_usage))
-        } else {
-            (&default_usage, Some(&default_usage))
-        };
-        crate::status::new_status_card(
+        let token_info = self.token_info.as_ref();
+        let total_usage = token_info
+            .map(|ti| &ti.total_token_usage)
+            .unwrap_or(&default_usage);
+        self.add_to_history(crate::status::new_status_output(
             &self.config,
             self.auth_manager.as_ref(),
-            &self.model_family,
-            self.auto_compact_enabled,
+            token_info,
             total_usage,
-            context_usage,
             &self.conversation_id,
             self.rate_limit_snapshot.as_ref(),
             self.plan_type,
             Local::now(),
-            self.model_family.get_model_slug(),
-        )
+            &self.model,
+        ));
     }
 
     pub(crate) fn status_menu_status_cell(&self) -> Box<dyn HistoryCell> {
         let default_usage = TokenUsage::default();
-        let (total_usage, context_usage) = if let Some(ti) = &self.token_info {
-            (&ti.total_token_usage, Some(&ti.last_token_usage))
-        } else {
-            (&default_usage, Some(&default_usage))
-        };
+        let token_info = self.token_info.as_ref();
+        let total_usage = token_info
+            .map(|ti| &ti.total_token_usage)
+            .unwrap_or(&default_usage);
+
         crate::status::new_status_menu_summary_card(
             &self.config,
             self.auth_manager.as_ref(),
-            &self.model_family,
-            self.auto_compact_enabled,
+            token_info,
             total_usage,
-            context_usage,
             &self.conversation_id,
             self.rate_limit_snapshot.as_ref(),
             self.plan_type,
             Local::now(),
-            self.model_family.get_model_slug(),
+            &self.model,
         )
     }
 
@@ -3732,6 +3724,51 @@ impl ChatWidget {
             .into(),
         );
         lines.push(vec!["Docs: ".dim(), "docs/xcodex/worktrees.md".cyan()].into());
+
+        self.add_to_history(CompositeHistoryCell::new(vec![
+            Box::new(command),
+            Box::new(PlainHistoryCell::new(lines)),
+        ]));
+    }
+
+    pub(crate) fn add_hooks_output(&mut self) {
+        let command = PlainHistoryCell::new(vec![Line::from(vec!["/hooks".magenta()])]);
+        let codex_home = self.config.codex_home.clone();
+        let logs_dir = codex_home.join("tmp").join("hooks").join("logs");
+        let payloads_dir = codex_home.join("tmp").join("hooks").join("payloads");
+
+        let lines: Vec<Line<'static>> = vec![
+            Line::from(vec![
+                "Automation hooks run external programs on lifecycle events. ".into(),
+                "Treat hook payloads/logs as potentially sensitive.".dim(),
+            ]),
+            Line::from(""),
+            Line::from(vec!["Quickstart:".magenta().bold()]),
+            Line::from(vec!["  xcodex hooks init".cyan()]),
+            Line::from(vec!["  xcodex hooks test --configured-only".cyan()]),
+            Line::from(vec!["  xcodex hooks list".cyan()]),
+            Line::from(vec!["  xcodex hooks paths".cyan()]),
+            Line::from(""),
+            Line::from(vec![
+                "Config: ".dim(),
+                format!("{}/config.toml", codex_home.display()).into(),
+            ]),
+            Line::from(vec![
+                "Logs: ".dim(),
+                format!("{}", logs_dir.display()).into(),
+            ]),
+            Line::from(vec![
+                "Payloads: ".dim(),
+                format!("{}", payloads_dir.display()).into(),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                "Docs: ".dim(),
+                "docs/xcodex/hooks.md".cyan(),
+                " and ".dim(),
+                "docs/xcodex/hooks-gallery.md".cyan(),
+            ]),
+        ];
 
         self.add_to_history(CompositeHistoryCell::new(vec![
             Box::new(command),
@@ -3858,7 +3895,6 @@ impl ChatWidget {
             Box::new(body),
         ]));
     }
-
     pub(crate) fn add_ps_output(&mut self) {
         let sessions = self
             .unified_exec_sessions
@@ -4418,7 +4454,6 @@ impl ChatWidget {
     /// Open a popup to choose a quick auto model. Selecting "All models"
     /// opens the full picker with every available preset.
     pub(crate) fn open_model_popup(&mut self) {
-        let current_model = self.model_family.get_model_slug().to_string();
         let presets: Vec<ModelPreset> =
             // todo(aibrahim): make this async function
             match self.models_manager.try_list_models(&self.config) {
@@ -4435,9 +4470,9 @@ impl ChatWidget {
 
         let current_label = presets
             .iter()
-            .find(|preset| preset.model == current_model)
+            .find(|preset| preset.model == self.model)
             .map(|preset| preset.display_name.to_string())
-            .unwrap_or_else(|| current_model.clone());
+            .unwrap_or_else(|| self.model.clone());
 
         let (mut auto_presets, other_presets): (Vec<ModelPreset>, Vec<ModelPreset>) = presets
             .into_iter()
@@ -4463,7 +4498,7 @@ impl ChatWidget {
                 SelectionItem {
                     name: preset.display_name.clone(),
                     description,
-                    is_current: model == current_model,
+                    is_current: model == self.model,
                     is_default: preset.is_default,
                     actions,
                     dismiss_on_select: true,
@@ -4526,12 +4561,11 @@ impl ChatWidget {
             return;
         }
 
-        let current_model = self.model_family.get_model_slug().to_string();
         let mut items: Vec<SelectionItem> = Vec::new();
         for preset in presets.into_iter() {
             let description =
                 (!preset.description.is_empty()).then_some(preset.description.to_string());
-            let is_current = preset.model == current_model;
+            let is_current = preset.model == self.model;
             let single_supported_effort = preset.supported_reasoning_efforts.len() == 1;
             let preset_for_action = preset.clone();
             let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
@@ -4657,7 +4691,7 @@ impl ChatWidget {
             .or(Some(default_effort));
 
         let model_slug = preset.model.to_string();
-        let is_current_model = self.model_family.get_model_slug() == preset.model;
+        let is_current_model = self.model == preset.model;
         let highlight_choice = if is_current_model {
             self.config.model_reasoning_effort
         } else {
@@ -5251,9 +5285,9 @@ impl ChatWidget {
     }
 
     /// Set the model in the widget's config copy.
-    pub(crate) fn set_model(&mut self, model: &str, model_family: ModelFamily) {
+    pub(crate) fn set_model(&mut self, model: &str) {
         self.session_header.set_model(model);
-        self.model_family = model_family;
+        self.model = model.to_string();
     }
 
     pub(crate) fn add_info_message(&mut self, message: String, hint: Option<String>) {

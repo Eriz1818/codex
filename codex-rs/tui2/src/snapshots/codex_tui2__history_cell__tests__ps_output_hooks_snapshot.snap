@@ -1,0 +1,15 @@
+---
+source: tui2/src/history_cell.rs
+expression: rendered
+---
+/ps
+
+Background terminals (2)
+
+  • proc-1 rg "foo" src
+  • proc-2 sleep 10
+
+Hooks (2)
+
+  • hook-1 agent-turn-complete · ~/.codex/hooks/notify.sh
+  • hook-2 approval-requested · ~/.codex/hooks/log.sh

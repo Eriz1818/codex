@@ -89,6 +89,7 @@ async fn hooks_agent_turn_complete_invoked() -> Result<()> {
             items: vec![UserInput::Text {
                 text: "hello world".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
@@ -147,6 +148,7 @@ async fn hooks_approval_requested_invoked_for_exec() -> Result<()> {
             items: vec![UserInput::Text {
                 text: "run a shell command".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
 
@@ -227,6 +229,7 @@ async fn hooks_model_request_started_invoked() -> Result<()> {
             items: vec![UserInput::Text {
                 text: "hello world".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
@@ -271,6 +274,7 @@ async fn hooks_model_response_completed_invoked() -> Result<()> {
             items: vec![UserInput::Text {
                 text: "hello world".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
@@ -336,6 +340,7 @@ async fn hooks_tool_call_started_and_finished_invoked() -> Result<()> {
             items: vec![UserInput::Text {
                 text: "run a shell command".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;

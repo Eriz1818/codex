@@ -1,0 +1,19 @@
+---
+source: tui2/src/chatwidget/tests.rs
+expression: rendered
+---
+/hooks
+
+Automation hooks run external programs on lifecycle events. Treat hook payloads/logs as potentially sensitive.
+
+Quickstart:
+  xcodex hooks init
+  xcodex hooks test --configured-only
+  xcodex hooks list
+  xcodex hooks paths
+
+Config: CODEX_HOME/config.toml
+Logs: CODEX_HOME/tmp/hooks/logs
+Payloads: CODEX_HOME/tmp/hooks/payloads
+
+Docs: docs/xcodex/hooks.md and docs/xcodex/hooks-gallery.md

@@ -1,7 +1,5 @@
-#[cfg(test)]
 use crate::history_cell::CompositeHistoryCell;
 use crate::history_cell::HistoryCell;
-#[cfg(test)]
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::with_border_with_inner_width;
 use crate::version::CODEX_CLI_VERSION;
@@ -9,10 +7,10 @@ use chrono::DateTime;
 use chrono::Local;
 use codex_common::create_config_summary_entries;
 use codex_core::config::Config;
-use codex_core::models_manager::model_family::ModelFamily;
 use codex_core::protocol::NetworkAccess;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::TokenUsage;
+use codex_core::protocol::TokenUsageInfo;
 use codex_protocol::ConversationId;
 use codex_protocol::account::PlanType;
 use ratatui::prelude::*;
@@ -76,14 +74,11 @@ struct StatusHistoryCell {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
 pub(crate) fn new_status_output(
     config: &Config,
     auth_manager: &AuthManager,
-    model_family: &ModelFamily,
-    auto_compact_enabled: bool,
+    token_info: Option<&TokenUsageInfo>,
     total_usage: &TokenUsage,
-    context_usage: Option<&TokenUsage>,
     session_id: &Option<ConversationId>,
     rate_limits: Option<&RateLimitSnapshotDisplay>,
     plan_type: Option<PlanType>,
@@ -94,10 +89,8 @@ pub(crate) fn new_status_output(
     let card = StatusHistoryCell::new(
         config,
         auth_manager,
-        model_family,
-        auto_compact_enabled,
+        token_info,
         total_usage,
-        context_usage,
         session_id,
         rate_limits,
         plan_type,
@@ -109,42 +102,11 @@ pub(crate) fn new_status_output(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn new_status_card(
-    config: &Config,
-    auth_manager: &AuthManager,
-    model_family: &ModelFamily,
-    auto_compact_enabled: bool,
-    total_usage: &TokenUsage,
-    context_usage: Option<&TokenUsage>,
-    session_id: &Option<ConversationId>,
-    rate_limits: Option<&RateLimitSnapshotDisplay>,
-    plan_type: Option<PlanType>,
-    now: DateTime<Local>,
-    model_name: &str,
-) -> Box<dyn HistoryCell> {
-    Box::new(StatusHistoryCell::new(
-        config,
-        auth_manager,
-        model_family,
-        auto_compact_enabled,
-        total_usage,
-        context_usage,
-        session_id,
-        rate_limits,
-        plan_type,
-        now,
-        model_name,
-    ))
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn new_status_menu_summary_card(
     config: &Config,
     auth_manager: &AuthManager,
-    model_family: &ModelFamily,
-    auto_compact_enabled: bool,
+    token_info: Option<&TokenUsageInfo>,
     total_usage: &TokenUsage,
-    context_usage: Option<&TokenUsage>,
     session_id: &Option<ConversationId>,
     rate_limits: Option<&RateLimitSnapshotDisplay>,
     plan_type: Option<PlanType>,
@@ -154,10 +116,8 @@ pub(crate) fn new_status_menu_summary_card(
     Box::new(StatusMenuSummaryCell(StatusHistoryCell::new(
         config,
         auth_manager,
-        model_family,
-        auto_compact_enabled,
+        token_info,
         total_usage,
-        context_usage,
         session_id,
         rate_limits,
         plan_type,
@@ -385,10 +345,8 @@ impl StatusHistoryCell {
     fn new(
         config: &Config,
         auth_manager: &AuthManager,
-        model_family: &ModelFamily,
-        auto_compact_enabled: bool,
+        token_info: Option<&TokenUsageInfo>,
         total_usage: &TokenUsage,
-        context_usage: Option<&TokenUsage>,
         session_id: &Option<ConversationId>,
         rate_limits: Option<&RateLimitSnapshotDisplay>,
         plan_type: Option<PlanType>,
@@ -415,14 +373,19 @@ impl StatusHistoryCell {
             }
         };
         let agents_summary = compose_agents_summary(config);
+        let auto_compact_enabled =
+            codex_core::prefs::load_blocking(&config.codex_home).auto_compact_enabled;
         let account = compose_account_display(auth_manager, plan_type);
         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
-        let context_window = model_family.context_window.and_then(|window| {
-            context_usage.map(|usage| StatusContextWindowData {
-                percent_remaining: usage.percent_of_context_window_remaining(window),
-                tokens_in_context: usage.tokens_in_context_window(),
-                window,
-            })
+        let default_usage = TokenUsage::default();
+        let (context_usage, context_window) = match token_info {
+            Some(info) => (&info.last_token_usage, info.model_context_window),
+            None => (&default_usage, config.model_context_window),
+        };
+        let context_window = context_window.map(|window| StatusContextWindowData {
+            percent_remaining: context_usage.percent_of_context_window_remaining(window),
+            tokens_in_context: context_usage.tokens_in_context_window(),
+            window,
         });
 
         let token_usage = StatusTokenUsageData {
@@ -671,6 +634,7 @@ impl HistoryCell for StatusHistoryCell {
         if self.token_usage.context_window.is_some() {
             push_label(&mut labels, &mut seen, "Context window");
         }
+
         self.collect_rate_limit_labels(&mut seen, &mut labels);
 
         let formatter = FieldFormatter::from_labels(labels.iter().map(String::as_str));
@@ -712,11 +676,11 @@ impl HistoryCell for StatusHistoryCell {
         lines.push(formatter.line("Agents.md", vec![Span::from(self.agents_summary.clone())]));
         lines.push(formatter.line(
             "Auto-compact",
-            vec![Span::from(if self.auto_compact_enabled {
-                "enabled"
+            vec![if self.auto_compact_enabled {
+                "enabled".green().bold()
             } else {
-                "disabled"
-            })],
+                "disabled".dim()
+            }],
         ));
         lines.push(formatter.line(
             "Thoughts",

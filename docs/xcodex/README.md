@@ -14,6 +14,7 @@ xcodex (xtreme-codex) is an effort to add features to upstream Codex CLI.
 - Settings: `docs/xcodex/settings.md`
 - Worktrees: `docs/xcodex/worktrees.md` (quickstart + shared-dirs contract at the top)
 - Hooks: `docs/xcodex/hooks.md`
+- Hooks gallery: `docs/xcodex/hooks-gallery.md`
 - Keeping context under control: `docs/xcodex/compact.md`
 - Hiding thoughts: `docs/xcodex/thoughts.md`
 - Background terminals: `docs/xcodex/background-terminals.md`
