@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use codex_common::approval_presets::ApprovalPreset;
+use codex_core::git_info::GitWorktreeEntry;
 use codex_core::protocol::ConversationPathResponseEvent;
 use codex_core::protocol::Event;
 use codex_core::protocol::RateLimitSnapshot;
@@ -64,6 +65,42 @@ pub(crate) enum AppEvent {
         show_worktree: bool,
     },
 
+    /// Update `worktrees.shared_dirs` at runtime.
+    UpdateWorktreesSharedDirs {
+        shared_dirs: Vec<String>,
+    },
+
+    /// Replace the cached git worktree list.
+    WorktreeListUpdated {
+        worktrees: Vec<GitWorktreeEntry>,
+        open_picker: bool,
+    },
+
+    /// Open the `/worktree` command menu in the composer (slash popup).
+    OpenWorktreeCommandMenu,
+
+    /// Refresh the git worktree list for the current session `cwd`.
+    WorktreeDetect {
+        open_picker: bool,
+    },
+
+    /// Report a worktree detection error (and optionally open the picker).
+    WorktreeListUpdateFailed {
+        error: String,
+        open_picker: bool,
+    },
+
+    /// Switch the active git worktree for this session (typically via `/worktree`).
+    WorktreeSwitched(PathBuf),
+
+    /// Warning emitted after switching worktrees when untracked files are detected in the
+    /// previously active worktree.
+    WorktreeUntrackedFilesDetected {
+        previous_worktree_root: PathBuf,
+        total: usize,
+        sample: Vec<String>,
+    },
+
     InsertHistoryCell(Box<dyn HistoryCell>),
 
     StartCommitAnimation,
@@ -92,6 +129,17 @@ pub(crate) enum AppEvent {
     PersistStatusBarGitOptions {
         show_git_branch: bool,
         show_worktree: bool,
+    },
+
+    /// Persist `worktrees.shared_dirs` to config.
+    PersistWorktreesSharedDirs {
+        shared_dirs: Vec<String>,
+    },
+
+    /// Persist the startup timeout for a single MCP server.
+    PersistMcpStartupTimeout {
+        server: String,
+        startup_timeout_sec: u64,
     },
 
     /// Open the reasoning selection popup after picking a model.

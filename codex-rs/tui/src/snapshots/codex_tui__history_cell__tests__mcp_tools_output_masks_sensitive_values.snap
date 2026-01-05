@@ -1,14 +1,17 @@
 ---
 source: tui/src/history_cell.rs
-assertion_line: 1540
+assertion_line: 2253
 expression: rendered
 ---
 /mcp
 
 🔌  MCP Tools
 
+  • MCP ready: (3.0s)
+
   • docs
     • Status: enabled
+    • Startup: Ready (420ms)
     • Auth: Unsupported
     • Command: docs-server
     • Env: TOKEN=*****, APP_TOKEN=*****
@@ -18,10 +21,15 @@ expression: rendered
 
   • http
     • Status: enabled
+    • Startup: Failed (3.0s)
     • Auth: Unsupported
+    • Error: handshake failed
+    • Retry: /mcp retry http
     • URL: https://example.com/mcp
     • HTTP headers: Authorization=*****
     • Env HTTP headers: X-API-Key=API_KEY_ENV
     • Tools: ping
     • Resources: (none)
     • Resource templates: (none)
+
+  • Retry failed: /mcp retry failed (or a specific server above)

@@ -10,14 +10,17 @@ expression: sanitized
 │ Visit https://chatgpt.com/codex/settings/usage for up-to-date      │
 │ information on rate limits and credits                             │
 │                                                                    │
+│  UI:               tui                                             │
 │  Model:            gpt-5.1-codex-max (reasoning high, summaries de │
 │  Directory: [[workspace]]                                          │
+│  CODEX_HOME: [[codex_home]]                                          │
 │  Approval:         on-request                                      │
 │  Sandbox:          read-only                                       │
 │  Agents.md:        <none>                                          │
 │  Auto-compact:     disabled                                        │
+│  Thoughts:         shown                                           │
 │                                                                    │
 │  Token usage:      1.9K total  (1K input + 900 output)             │
-│  Context window:   99% left (2.25K used / 272K)                    │
+│  Context window:   [████████████████████] 99% left (2.25K used / 2 │
 │  5h limit:         [██████░░░░░░░░░░░░░░] 28% left (resets 03:14)  │
 ╰────────────────────────────────────────────────────────────────────╯

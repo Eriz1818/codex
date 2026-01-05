@@ -602,6 +602,26 @@ impl ChatComposer {
                                 cursor_target = Some(self.textarea.text().len());
                             }
                         }
+                        CommandItem::BuiltinText {
+                            name,
+                            insert_trailing_space,
+                            ..
+                        } => {
+                            let starts_with_cmd =
+                                first_line.trim_start().starts_with(&format!("/{name}"));
+                            let desired = if insert_trailing_space {
+                                format!("/{name} ")
+                            } else {
+                                format!("/{name}")
+                            };
+                            if !starts_with_cmd
+                                || (insert_trailing_space
+                                    && first_line.trim_end() == format!("/{name}"))
+                            {
+                                self.textarea.set_text(&desired);
+                                cursor_target = Some(desired.len());
+                            }
+                        }
                         CommandItem::UserPrompt(idx) => {
                             if let Some(prompt) = popup.prompt(idx) {
                                 match prompt_selection_action(
@@ -649,6 +669,26 @@ impl ChatComposer {
                         CommandItem::Builtin(cmd) => {
                             self.textarea.set_text("");
                             return (InputResult::Command(cmd), true);
+                        }
+                        CommandItem::BuiltinText {
+                            name,
+                            run_on_enter,
+                            insert_trailing_space,
+                            ..
+                        } => {
+                            let text = if insert_trailing_space {
+                                format!("/{name} ")
+                            } else {
+                                format!("/{name}")
+                            };
+                            if run_on_enter {
+                                self.textarea.set_text("");
+                                return (InputResult::Submitted(text.trim_end().to_string()), true);
+                            }
+                            let cursor = text.len();
+                            self.textarea.set_text(&text);
+                            self.textarea.set_cursor(cursor);
+                            return (InputResult::None, true);
                         }
                         CommandItem::UserPrompt(idx) => {
                             if let Some(prompt) = popup.prompt(idx) {
@@ -1721,7 +1761,7 @@ impl ChatComposer {
             .map(|idx| name_start + idx)
             .unwrap_or_else(|| first_line.len());
 
-        if cursor > name_end {
+        if cursor > name_end && !first_line[name_end..].trim().is_empty() {
             return None;
         }
 
@@ -2751,6 +2791,9 @@ mod tests {
                 Some(CommandItem::Builtin(cmd)) => {
                     assert_eq!(cmd.command(), "model")
                 }
+                Some(CommandItem::BuiltinText { .. }) => {
+                    panic!("unexpected builtin text selected for '/mo'")
+                }
                 Some(CommandItem::UserPrompt(_)) => {
                     panic!("unexpected prompt selected for '/mo'")
                 }
@@ -2806,6 +2849,9 @@ mod tests {
             ActivePopup::Command(popup) => match popup.selected_item() {
                 Some(CommandItem::Builtin(cmd)) => {
                     assert_eq!(cmd.command(), "resume")
+                }
+                Some(CommandItem::BuiltinText { .. }) => {
+                    panic!("unexpected builtin text selected for '/res'")
                 }
                 Some(CommandItem::UserPrompt(_)) => {
                     panic!("unexpected prompt selected for '/res'")

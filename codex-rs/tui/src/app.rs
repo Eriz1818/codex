@@ -321,6 +321,8 @@ pub(crate) struct App {
 
     // One-shot suppression of the next world-writable scan after user confirmation.
     skip_world_writable_scan_once: bool,
+
+    shared_dirs_write_notice_shown: bool,
 }
 
 impl App {
@@ -452,6 +454,7 @@ impl App {
             pending_update_action: None,
             suppress_shutdown_complete: false,
             skip_world_writable_scan_once: false,
+            shared_dirs_write_notice_shown: false,
         };
 
         // On startup, if Agent mode (workspace-write) or ReadOnly is active, warn about world-writable dirs on Windows.
@@ -772,6 +775,176 @@ impl App {
                     .set_status_bar_git_options(show_git_branch, show_worktree);
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::WorktreeListUpdated {
+                worktrees,
+                open_picker,
+            } => {
+                self.chat_widget.set_worktree_list(worktrees, open_picker);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::WorktreeDetect { open_picker } => {
+                self.chat_widget.spawn_worktree_detection(open_picker);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::OpenWorktreeCommandMenu => {
+                if self.chat_widget.composer_is_empty() {
+                    self.chat_widget.set_composer_text("/worktree ".to_string());
+                } else {
+                    self.chat_widget.add_info_message(
+                        "Clear the composer to open the /worktree menu.".to_string(),
+                        None,
+                    );
+                }
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::WorktreeListUpdateFailed { error, open_picker } => {
+                self.chat_widget
+                    .on_worktree_list_update_failed(error, open_picker);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::WorktreeSwitched(cwd) => {
+                let previous_cwd = self.config.cwd.clone();
+                self.config.cwd = cwd.clone();
+                self.chat_widget.set_session_cwd(cwd);
+                tui.frame_requester().schedule_frame();
+
+                let next_root = codex_core::git_info::resolve_git_worktree_head(&self.config.cwd)
+                    .map(|head| head.worktree_root);
+
+                let auto_link = self.config.worktrees_auto_link_shared_dirs
+                    && !self.config.worktrees_shared_dirs.is_empty();
+                if auto_link
+                    && let Some(next_root) = next_root.clone()
+                    && let Some(workspace_root) =
+                        codex_core::git_info::resolve_root_git_project_for_trust(&next_root)
+                    && next_root != workspace_root
+                {
+                    let show_notice = !self.shared_dirs_write_notice_shown;
+                    self.shared_dirs_write_notice_shown = true;
+                    let shared_dirs = self.config.worktrees_shared_dirs.clone();
+                    let tx = self.app_event_tx.clone();
+                    tokio::spawn(async move {
+                        let actions = codex_core::git_info::link_worktree_shared_dirs(
+                            &next_root,
+                            &workspace_root,
+                            &shared_dirs,
+                        )
+                        .await;
+
+                        let mut linked = 0usize;
+                        let mut skipped = 0usize;
+                        let mut failed = 0usize;
+                        for action in &actions {
+                            match action.outcome {
+                                codex_core::git_info::SharedDirLinkOutcome::Linked => linked += 1,
+                                codex_core::git_info::SharedDirLinkOutcome::AlreadyLinked => {}
+                                codex_core::git_info::SharedDirLinkOutcome::Skipped(_) => {
+                                    skipped += 1;
+                                }
+                                codex_core::git_info::SharedDirLinkOutcome::Failed(_) => {
+                                    failed += 1;
+                                }
+                            }
+                        }
+
+                        if linked == 0 && skipped == 0 && failed == 0 {
+                            return;
+                        }
+
+                        let summary = format!(
+                            "Auto-linked shared dirs after worktree switch: linked={linked}, skipped={skipped}, failed={failed}."
+                        );
+                        let hint = if show_notice {
+                            Some(String::from(
+                                "Note: shared dirs are linked into the workspace root; writes under them persist across worktrees. Tip: run `/worktree doctor` for details.",
+                            ))
+                        } else {
+                            Some(String::from("Tip: run `/worktree doctor` for details."))
+                        };
+                        tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            crate::history_cell::new_info_event(summary, hint),
+                        )));
+                    });
+                }
+
+                let previous_root = codex_core::git_info::resolve_git_worktree_head(&previous_cwd)
+                    .map(|head| head.worktree_root);
+
+                let Some(previous_root) = previous_root else {
+                    return Ok(true);
+                };
+                let Some(next_root) = next_root else {
+                    return Ok(true);
+                };
+
+                if previous_root == next_root {
+                    return Ok(true);
+                }
+
+                if codex_core::git_info::resolve_root_git_project_for_trust(&previous_root)
+                    .is_some_and(|root| root == previous_root)
+                {
+                    return Ok(true);
+                }
+
+                let tx = self.app_event_tx.clone();
+                tokio::spawn(async move {
+                    let Ok(summary) =
+                        codex_core::git_info::summarize_git_untracked_files(&previous_root, 5)
+                            .await
+                    else {
+                        return;
+                    };
+                    if summary.total == 0 {
+                        return;
+                    }
+
+                    tx.send(AppEvent::WorktreeUntrackedFilesDetected {
+                        previous_worktree_root: previous_root,
+                        total: summary.total,
+                        sample: summary.sample,
+                    });
+                });
+            }
+            AppEvent::WorktreeUntrackedFilesDetected {
+                previous_worktree_root,
+                total,
+                sample,
+            } => {
+                let display = crate::exec_command::relativize_to_home(&previous_worktree_root)
+                    .map(|path| {
+                        if path.as_os_str().is_empty() {
+                            String::from("~")
+                        } else {
+                            format!("~/{}", path.display())
+                        }
+                    })
+                    .unwrap_or_else(|| previous_worktree_root.display().to_string());
+
+                let sample_preview = if sample.is_empty() {
+                    String::new()
+                } else {
+                    let preview: String = sample
+                        .iter()
+                        .take(3)
+                        .map(|path| format!("\n  - {path}"))
+                        .collect();
+                    let remainder = total.saturating_sub(sample.len());
+                    if remainder > 0 {
+                        format!("{preview}\n  - … +{remainder} more")
+                    } else {
+                        preview
+                    }
+                };
+
+                self.chat_widget.add_info_message(
+                    format!(
+                        "Untracked files detected in the previous worktree ({display}). Deleting that worktree may lose them.{sample_preview}"
+                    ),
+                    Some(String::from("Tip: git stash push -u -m \"worktree scratch\"")),
+                );
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::StartFileSearch(query) => {
                 if !query.is_empty() {
                     self.file_search.on_user_query(query);
@@ -1007,6 +1180,66 @@ impl App {
                                 "Failed to save status bar options: {err}"
                             ));
                         }
+                    }
+                }
+            }
+            AppEvent::UpdateWorktreesSharedDirs { shared_dirs } => {
+                self.config.worktrees_shared_dirs = shared_dirs.clone();
+                self.chat_widget.set_worktrees_shared_dirs(shared_dirs);
+            }
+            AppEvent::PersistWorktreesSharedDirs { shared_dirs } => {
+                let mut shared_dirs_array = toml_edit::Array::new();
+                for dir in &shared_dirs {
+                    shared_dirs_array.push(dir.clone());
+                }
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_edits([ConfigEdit::SetPath {
+                        segments: vec!["worktrees".to_string(), "shared_dirs".to_string()],
+                        value: toml_edit::value(shared_dirs_array),
+                    }])
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(err) => {
+                        tracing::error!(error = %err, "failed to persist worktree shared dirs");
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save worktree shared dirs: {err}"
+                        ));
+                    }
+                }
+            }
+            AppEvent::PersistMcpStartupTimeout {
+                server,
+                startup_timeout_sec,
+            } => {
+                let profile = self.active_profile.as_deref();
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_profile(profile)
+                    .with_edits([ConfigEdit::SetPath {
+                        segments: vec![
+                            "mcp_servers".to_string(),
+                            server.clone(),
+                            "startup_timeout_sec".to_string(),
+                        ],
+                        value: toml_edit::value(
+                            i64::try_from(startup_timeout_sec).unwrap_or(i64::MAX),
+                        ),
+                    }])
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {
+                        if let Some(cfg) = self.config.mcp_servers.get_mut(&server) {
+                            cfg.startup_timeout_sec =
+                                Some(std::time::Duration::from_secs(startup_timeout_sec));
+                        }
+                    }
+                    Err(err) => {
+                        tracing::error!(error = %err, "failed to persist MCP startup timeout");
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save MCP startup timeout for `{server}`: {err}"
+                        ));
                     }
                 }
             }
@@ -1482,6 +1715,7 @@ mod tests {
             feedback: codex_feedback::CodexFeedback::new(),
             pending_update_action: None,
             suppress_shutdown_complete: false,
+            shared_dirs_write_notice_shown: false,
             skip_world_writable_scan_once: false,
         }
     }
@@ -1522,6 +1756,7 @@ mod tests {
                 feedback: codex_feedback::CodexFeedback::new(),
                 pending_update_action: None,
                 suppress_shutdown_complete: false,
+                shared_dirs_write_notice_shown: false,
                 skip_world_writable_scan_once: false,
             },
             rx,

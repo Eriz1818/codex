@@ -16,6 +16,7 @@ pub enum SlashCommand {
     Approvals,
     Experimental,
     Skills,
+    Help,
     Review,
     New,
     Resume,
@@ -28,6 +29,8 @@ pub enum SlashCommand {
     Mention,
     Status,
     Settings,
+    StatusMenu,
+    Worktree,
     Mcp,
     Logout,
     Quit,
@@ -56,8 +59,11 @@ impl SlashCommand {
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how xcodex performs specific tasks",
-            SlashCommand::Status => "show current session configuration and token usage",
-            SlashCommand::Settings => "configure UI and session behavior",
+            SlashCommand::Help => "show help for a topic (e.g. /help xcodex)",
+            SlashCommand::Status => "open the status/settings menu",
+            SlashCommand::Settings => "open the status/settings menu",
+            SlashCommand::StatusMenu => "open the status/settings menu (alias)",
+            SlashCommand::Worktree => "switch this session to a different git worktree",
             SlashCommand::Ps => "list background terminals",
             SlashCommand::PsKill => "terminate background terminals",
             SlashCommand::Model => "choose what model and reasoning effort to use",
@@ -93,8 +99,11 @@ impl SlashCommand {
             SlashCommand::Diff
             | SlashCommand::Mention
             | SlashCommand::Skills
+            | SlashCommand::Help
             | SlashCommand::Status
             | SlashCommand::Settings
+            | SlashCommand::StatusMenu
+            | SlashCommand::Worktree
             | SlashCommand::Ps
             | SlashCommand::PsKill
             | SlashCommand::Mcp

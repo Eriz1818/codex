@@ -1,3 +1,4 @@
+use super::new_status_menu_summary_card;
 use super::new_status_output;
 use super::rate_limit_snapshot_display;
 use crate::history_cell::HistoryCell;
@@ -62,6 +63,20 @@ fn sanitize_directory(lines: Vec<String>) -> Vec<String> {
                 let suffix = &line[pipe_idx..];
                 let content_width = pipe_idx.saturating_sub(dir_pos + "Directory: ".len());
                 let replacement = "[[workspace]]";
+                let mut rebuilt = prefix.to_string();
+                rebuilt.push_str(replacement);
+                if content_width > replacement.len() {
+                    rebuilt.push_str(&" ".repeat(content_width - replacement.len()));
+                }
+                rebuilt.push_str(suffix);
+                rebuilt
+            } else if let (Some(home_pos), Some(pipe_idx)) =
+                (line.find("CODEX_HOME: "), line.rfind('│'))
+            {
+                let prefix = &line[..home_pos + "CODEX_HOME: ".len()];
+                let suffix = &line[pipe_idx..];
+                let content_width = pipe_idx.saturating_sub(home_pos + "CODEX_HOME: ".len());
+                let replacement = "[[codex_home]]";
                 let mut rebuilt = prefix.to_string();
                 rebuilt.push_str(replacement);
                 if content_width > replacement.len() {
@@ -155,6 +170,66 @@ async fn status_snapshot_includes_reasoning_details() {
     }
     let sanitized = sanitize_directory(rendered_lines).join("\n");
     assert_snapshot!(sanitized);
+}
+
+#[tokio::test]
+async fn status_menu_summary_snapshot_includes_limit_bars() {
+    let temp_home = TempDir::new().expect("temp home");
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
+    config.model_provider_id = "openai".to_string();
+    config.model_reasoning_effort = Some(ReasoningEffort::High);
+    config.model_reasoning_summary = ReasoningSummary::Auto;
+    config.cwd = PathBuf::from("/workspace/tests");
+
+    let auth_manager = test_auth_manager(&config);
+    let usage = TokenUsage {
+        input_tokens: 1_200,
+        cached_input_tokens: 200,
+        output_tokens: 900,
+        reasoning_output_tokens: 150,
+        total_tokens: 2_250,
+    };
+
+    let captured_at = chrono::Local
+        .with_ymd_and_hms(2024, 1, 2, 3, 4, 5)
+        .single()
+        .expect("timestamp");
+    let snapshot = RateLimitSnapshot {
+        primary: Some(RateLimitWindow {
+            used_percent: 72.5,
+            window_minutes: Some(300),
+            resets_at: Some(reset_at_from(&captured_at, 600)),
+        }),
+        secondary: Some(RateLimitWindow {
+            used_percent: 45.0,
+            window_minutes: Some(10080),
+            resets_at: Some(reset_at_from(&captured_at, 1_200)),
+        }),
+        credits: None,
+        plan_type: None,
+    };
+    let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
+
+    let cell = new_status_menu_summary_card(
+        &config,
+        &auth_manager,
+        &model_family,
+        false,
+        &usage,
+        Some(&usage),
+        &None,
+        Some(&rate_display),
+        None,
+        captured_at,
+        &model_slug,
+    );
+
+    let rendered = render_lines(&cell.display_lines(80)).join("\n");
+    assert_snapshot!(rendered);
 }
 
 #[tokio::test]

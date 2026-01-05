@@ -19,12 +19,61 @@ use std::collections::HashSet;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandItem {
     Builtin(SlashCommand),
+    BuiltinText {
+        /// Command string without the leading '/' (may include spaces).
+        name: &'static str,
+        description: &'static str,
+        /// When true, pressing Enter on this suggestion runs it immediately.
+        run_on_enter: bool,
+        /// When true, completion appends a trailing space to invite additional args.
+        insert_trailing_space: bool,
+    },
     // Index into `prompts`
     UserPrompt(usize),
 }
 
+const WORKTREE_SUBCOMMANDS: &[CommandItem] = &[
+    CommandItem::BuiltinText {
+        name: "worktree detect",
+        description: "refresh git worktree list and open picker",
+        run_on_enter: true,
+        insert_trailing_space: false,
+    },
+    CommandItem::BuiltinText {
+        name: "worktree doctor",
+        description: "show shared-dir + untracked status for this worktree",
+        run_on_enter: true,
+        insert_trailing_space: false,
+    },
+    CommandItem::BuiltinText {
+        name: "worktree link-shared",
+        description: "apply shared-dir links for this worktree",
+        run_on_enter: true,
+        insert_trailing_space: false,
+    },
+    CommandItem::BuiltinText {
+        name: "worktree link-shared --migrate",
+        description: "migrate untracked files into workspace root, then link",
+        run_on_enter: true,
+        insert_trailing_space: false,
+    },
+    CommandItem::BuiltinText {
+        name: "worktree init",
+        description: "create a new worktree and switch to it",
+        run_on_enter: false,
+        insert_trailing_space: true,
+    },
+    CommandItem::BuiltinText {
+        name: "worktree shared",
+        description: "manage `worktrees.shared_dirs` from the TUI",
+        run_on_enter: false,
+        insert_trailing_space: true,
+    },
+];
+
 pub(crate) struct CommandPopup {
     command_filter: String,
+    command_line: String,
     builtins: Vec<(&'static str, SlashCommand)>,
     prompts: Vec<CustomPrompt>,
     state: ScrollState,
@@ -42,6 +91,7 @@ impl CommandPopup {
         prompts.sort_by(|a, b| a.name.cmp(&b.name));
         Self {
             command_filter: String::new(),
+            command_line: String::new(),
             builtins,
             prompts,
             state: ScrollState::new(),
@@ -80,11 +130,13 @@ impl CommandPopup {
             // Update the filter keeping the original case (commands are all
             // lower-case for now but this may change in the future).
             self.command_filter = cmd_token.to_string();
+            self.command_line = token.to_string();
         } else {
             // The composer no longer starts with '/'. Reset the filter so the
             // popup shows the *full* command list if it is still displayed
             // for some reason.
             self.command_filter.clear();
+            self.command_line.clear();
         }
 
         // Reset or clamp selected index based on new filtered list.
@@ -126,6 +178,27 @@ impl CommandPopup {
                 out.push((CommandItem::Builtin(*cmd), Some(indices), score));
             }
         }
+
+        let show_worktree_subcommands = if self.command_filter == "worktree" {
+            match self.command_line.strip_prefix("worktree") {
+                Some(rest) => rest.starts_with(char::is_whitespace),
+                None => false,
+            }
+        } else {
+            false
+        };
+        let worktree_filter = self.command_line.trim_end();
+        let mut worktree_matches: Vec<(CommandItem, Option<Vec<usize>>, i32)> = Vec::new();
+        if show_worktree_subcommands {
+            for item in WORKTREE_SUBCOMMANDS {
+                let CommandItem::BuiltinText { name, .. } = item else {
+                    continue;
+                };
+                if let Some((indices, score)) = fuzzy_match(name, worktree_filter) {
+                    worktree_matches.push((*item, Some(indices), score));
+                }
+            }
+        }
         // Support both search styles:
         // - Typing "name" should surface "/prompts:name" results.
         // - Typing "prompts:name" should also work.
@@ -140,15 +213,28 @@ impl CommandPopup {
             a.2.cmp(&b.2).then_with(|| {
                 let an = match a.0 {
                     CommandItem::Builtin(c) => c.command(),
+                    CommandItem::BuiltinText { name, .. } => name,
                     CommandItem::UserPrompt(i) => &self.prompts[i].name,
                 };
                 let bn = match b.0 {
                     CommandItem::Builtin(c) => c.command(),
+                    CommandItem::BuiltinText { name, .. } => name,
                     CommandItem::UserPrompt(i) => &self.prompts[i].name,
                 };
                 an.cmp(bn)
             })
         });
+
+        if show_worktree_subcommands && !worktree_matches.is_empty() {
+            let insert_at = out
+                .iter()
+                .position(|(item, _, _)| {
+                    matches!(item, CommandItem::Builtin(SlashCommand::Worktree))
+                })
+                .map(|idx| idx + 1)
+                .unwrap_or(0);
+            out.splice(insert_at..insert_at, worktree_matches);
+        }
         out
     }
 
@@ -167,6 +253,9 @@ impl CommandPopup {
                     CommandItem::Builtin(cmd) => {
                         (format!("/{}", cmd.command()), cmd.description().to_string())
                     }
+                    CommandItem::BuiltinText {
+                        name, description, ..
+                    } => (format!("/{name}"), description.to_string()),
                     CommandItem::UserPrompt(i) => {
                         let prompt = &self.prompts[i];
                         let description = prompt
@@ -246,6 +335,7 @@ mod tests {
         let matches = popup.filtered_items();
         let has_init = matches.iter().any(|item| match item {
             CommandItem::Builtin(cmd) => cmd.command() == "init",
+            CommandItem::BuiltinText { .. } => false,
             CommandItem::UserPrompt(_) => false,
         });
         assert!(
@@ -264,6 +354,9 @@ mod tests {
         let selected = popup.selected_item();
         match selected {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "init"),
+            Some(CommandItem::BuiltinText { .. }) => {
+                panic!("unexpected builtin-text suggestion selected for '/init'")
+            }
             Some(CommandItem::UserPrompt(_)) => panic!("unexpected prompt selected for '/init'"),
             None => panic!("expected a selected command for exact match"),
         }
@@ -276,6 +369,9 @@ mod tests {
         let matches = popup.filtered_items();
         match matches.first() {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "model"),
+            Some(CommandItem::BuiltinText { .. }) => {
+                panic!("unexpected builtin-text suggestion ranked before '/model' for '/mo'")
+            }
             Some(CommandItem::UserPrompt(_)) => {
                 panic!("unexpected prompt ranked before '/model' for '/mo'")
             }
@@ -385,12 +481,44 @@ mod tests {
             .into_iter()
             .filter_map(|item| match item {
                 CommandItem::Builtin(cmd) => Some(cmd.command()),
+                CommandItem::BuiltinText { .. } => None,
                 CommandItem::UserPrompt(_) => None,
             })
             .collect();
         assert!(
             cmds.contains(&"compact") && cmds.contains(&"feedback"),
             "expected fuzzy search for '/ac' to include compact and feedback, got {cmds:?}"
+        );
+    }
+
+    #[test]
+    fn worktree_subcommands_are_suggested_under_worktree() {
+        let mut popup = CommandPopup::new(Vec::new(), false);
+        popup.on_composer_text_change("/worktree ".to_string());
+
+        let items = popup.filtered_items();
+        let worktree_idx = items
+            .iter()
+            .position(|item| matches!(item, CommandItem::Builtin(SlashCommand::Worktree)));
+        let first_after_worktree = worktree_idx.and_then(|idx| items.get(idx + 1));
+
+        assert!(
+            matches!(first_after_worktree, Some(CommandItem::BuiltinText { .. })),
+            "expected at least one /worktree subcommand suggestion after /worktree"
+        );
+    }
+
+    #[test]
+    fn worktree_subcommands_are_hidden_until_space() {
+        let mut popup = CommandPopup::new(Vec::new(), false);
+        popup.on_composer_text_change("/worktree".to_string());
+
+        let items = popup.filtered_items();
+        assert!(
+            !items.iter().any(|item| {
+                matches!(item, CommandItem::BuiltinText { name, .. } if name.starts_with("worktree "))
+            }),
+            "expected no /worktree subcommand suggestions without a trailing space"
         );
     }
 }

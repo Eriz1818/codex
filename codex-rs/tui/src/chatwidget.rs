@@ -13,6 +13,8 @@ use codex_core::config::ConstraintResult;
 use codex_core::config::types::Notifications;
 use codex_core::features::FEATURES;
 use codex_core::features::Feature;
+use codex_core::git_info::GitHeadState;
+use codex_core::git_info::GitWorktreeEntry;
 use codex_core::git_info::current_branch_name;
 use codex_core::git_info::local_git_branches;
 use codex_core::models_manager::manager::ModelsManager;
@@ -86,6 +88,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinHandle;
+use tokio::time::MissedTickBehavior;
 use tracing::debug;
 
 use crate::app_event::AppEvent;
@@ -344,6 +347,11 @@ pub(crate) struct ChatWidget {
     rate_limit_warnings: RateLimitWarningState,
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
     rate_limit_poller: Option<JoinHandle<()>>,
+    status_bar_git_poller: Option<JoinHandle<()>>,
+    worktree_list: Vec<GitWorktreeEntry>,
+    worktree_list_error: Option<String>,
+    worktree_list_refresh_in_progress: bool,
+    shared_dirs_write_notice_shown: bool,
     // Stream lifecycle controller
     stream_controller: Option<StreamController>,
     running_commands: HashMap<String, RunningCommand>,
@@ -353,6 +361,11 @@ pub(crate) struct ChatWidget {
     unified_exec_sessions: Vec<UnifiedExecSessionSummary>,
     hook_processes: Vec<HookProcessSummary>,
     mcp_startup_status: Option<HashMap<String, McpStartupStatus>>,
+    mcp_failed_servers: Vec<String>,
+    mcp_startup_started_at: Option<Instant>,
+    mcp_startup_duration: Option<Duration>,
+    mcp_server_start_times: HashMap<String, Instant>,
+    mcp_startup_durations: HashMap<String, Duration>,
     // Queue of interruptive UI events deferred during an active write cycle
     interrupts: InterruptManager,
     // Accumulates the current reasoning block text to extract a header
@@ -451,6 +464,13 @@ impl ChatWidget {
 
     // --- Small event handlers ---
     fn on_session_configured(&mut self, event: codex_core::protocol::SessionConfiguredEvent) {
+        self.mcp_startup_started_at = Some(Instant::now());
+        self.mcp_startup_duration = None;
+        self.mcp_startup_status = None;
+        self.mcp_failed_servers.clear();
+        self.set_mcp_startup_banner(None);
+        self.mcp_server_start_times.clear();
+        self.mcp_startup_durations.clear();
         self.bottom_pane
             .set_history_metadata(event.history_log_id, event.history_entry_count);
         self.set_skills(None);
@@ -868,10 +888,77 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    fn set_mcp_startup_banner(&mut self, message: Option<String>) {
+        self.bottom_pane.set_mcp_startup_banner(message);
+    }
+
+    fn parse_timeout_seconds(error: &str) -> Option<u64> {
+        let lower = error.to_ascii_lowercase();
+        if !lower.contains("timed out") {
+            return None;
+        }
+
+        let after_idx = lower.rfind("after ")?;
+        let mut digits = String::new();
+        for ch in lower[after_idx + "after ".len()..].chars() {
+            if ch.is_ascii_digit() {
+                digits.push(ch);
+            } else if !digits.is_empty() {
+                break;
+            }
+        }
+        if digits.is_empty() {
+            return None;
+        }
+        digits.parse().ok()
+    }
+
+    fn timeout_tip_for_failure(server: &str, error: &str) -> Option<String> {
+        let secs = Self::parse_timeout_seconds(error);
+        if secs.is_none() && !error.to_ascii_lowercase().contains("timed out") {
+            return None;
+        }
+
+        let suggested = secs.map_or(30, |secs| std::cmp::max(30, secs.saturating_mul(3)));
+        Some(format!(
+            "Tip: increase startup timeout: `/mcp timeout {server} {suggested}`."
+        ))
+    }
+
+    fn timeout_tip_for_failures(
+        failures: &[codex_core::protocol::McpStartupFailure],
+    ) -> Option<String> {
+        failures
+            .iter()
+            .find_map(|failure| Self::timeout_tip_for_failure(&failure.server, &failure.error))
+    }
+
     fn on_mcp_startup_update(&mut self, ev: McpStartupUpdateEvent) {
         let mut status = self.mcp_startup_status.take().unwrap_or_default();
+        let now = Instant::now();
+        match &ev.status {
+            McpStartupStatus::Starting => {
+                self.mcp_server_start_times.insert(ev.server.clone(), now);
+                self.mcp_startup_durations.remove(&ev.server);
+            }
+            McpStartupStatus::Ready
+            | McpStartupStatus::Cancelled
+            | McpStartupStatus::Failed { .. } => {
+                if let Some(started_at) = self.mcp_server_start_times.remove(&ev.server) {
+                    self.mcp_startup_durations
+                        .insert(ev.server.clone(), now.saturating_duration_since(started_at));
+                }
+            }
+        }
         if let McpStartupStatus::Failed { error } = &ev.status {
-            self.on_warning(error);
+            let server = &ev.server;
+            let mut message = format!("MCP startup incomplete (failed: {server}).");
+            if let Some(tip) = Self::timeout_tip_for_failure(&ev.server, error) {
+                message.push(' ');
+                message.push_str(&tip);
+            }
+            message.push_str(" Run `/mcp` for details.");
+            self.set_mcp_startup_banner(Some(message));
         }
         status.insert(ev.server, ev.status);
         self.mcp_startup_status = Some(status);
@@ -915,22 +1002,99 @@ impl ChatWidget {
     }
 
     fn on_mcp_startup_complete(&mut self, ev: McpStartupCompleteEvent) {
-        let mut parts = Vec::new();
-        if !ev.failed.is_empty() {
-            let failed_servers: Vec<_> = ev.failed.iter().map(|f| f.server.clone()).collect();
-            parts.push(format!("failed: {}", failed_servers.join(", ")));
-        }
-        if !ev.cancelled.is_empty() {
-            self.on_warning(format!(
-                "MCP startup interrupted. The following servers were not initialized: {}",
-                ev.cancelled.join(", ")
-            ));
-        }
-        if !parts.is_empty() {
-            self.on_warning(format!("MCP startup incomplete ({})", parts.join("; ")));
+        let now = Instant::now();
+        if let Some(started_at) = self.mcp_startup_started_at {
+            self.mcp_startup_duration = Some(now.saturating_duration_since(started_at));
         }
 
-        self.mcp_startup_status = None;
+        let mut retryable: std::collections::BTreeSet<String> =
+            self.mcp_failed_servers.drain(..).collect();
+        for server in &ev.ready {
+            retryable.remove(server);
+        }
+        for failure in &ev.failed {
+            retryable.insert(failure.server.clone());
+        }
+        for server in &ev.cancelled {
+            retryable.insert(server.clone());
+        }
+        self.mcp_failed_servers = retryable.into_iter().collect();
+
+        if self.mcp_failed_servers.is_empty() {
+            self.set_mcp_startup_banner(None);
+        } else {
+            let mut parts = Vec::new();
+            if !ev.failed.is_empty() {
+                let failed_servers: Vec<_> = ev.failed.iter().map(|f| f.server.as_str()).collect();
+                let failed = failed_servers.join(", ");
+                parts.push(format!("failed: {failed}"));
+            }
+            if !ev.cancelled.is_empty() {
+                let cancelled = ev.cancelled.join(", ");
+                parts.push(format!("not initialized: {cancelled}"));
+            }
+            let mut message = if parts.is_empty() {
+                "MCP startup incomplete.".to_string()
+            } else {
+                let summary = parts.join("; ");
+                format!("MCP startup incomplete ({summary}).")
+            };
+            message.push_str(" Press `r` to retry.");
+            if let Some(tip) = Self::timeout_tip_for_failures(&ev.failed) {
+                message.push(' ');
+                message.push_str(&tip);
+            }
+            message.push_str(" Run `/mcp` for details.");
+            self.set_mcp_startup_banner(Some(message));
+        }
+
+        for server in &ev.ready {
+            if !self.mcp_startup_durations.contains_key(server)
+                && let Some(started_at) = self.mcp_server_start_times.remove(server)
+            {
+                self.mcp_startup_durations
+                    .insert(server.clone(), now.saturating_duration_since(started_at));
+            }
+        }
+        for failure in &ev.failed {
+            if !self.mcp_startup_durations.contains_key(&failure.server)
+                && let Some(started_at) = self.mcp_server_start_times.remove(&failure.server)
+            {
+                self.mcp_startup_durations.insert(
+                    failure.server.clone(),
+                    now.saturating_duration_since(started_at),
+                );
+            }
+        }
+        for server in &ev.cancelled {
+            if !self.mcp_startup_durations.contains_key(server)
+                && let Some(started_at) = self.mcp_server_start_times.remove(server)
+            {
+                self.mcp_startup_durations
+                    .insert(server.clone(), now.saturating_duration_since(started_at));
+            }
+        }
+
+        let mut status = self.mcp_startup_status.take().unwrap_or_default();
+        for server in &ev.ready {
+            status.insert(server.clone(), McpStartupStatus::Ready);
+        }
+        for failure in &ev.failed {
+            status.insert(
+                failure.server.clone(),
+                McpStartupStatus::Failed {
+                    error: failure.error.clone(),
+                },
+            );
+        }
+        for server in &ev.cancelled {
+            status.insert(server.clone(), McpStartupStatus::Cancelled);
+        }
+        self.mcp_startup_status = if status.is_empty() {
+            None
+        } else {
+            Some(status)
+        };
         self.bottom_pane.set_task_running(false);
         self.maybe_send_next_queued_input();
         self.request_redraw();
@@ -1633,6 +1797,11 @@ impl ChatWidget {
             rate_limit_warnings: RateLimitWarningState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             rate_limit_poller: None,
+            status_bar_git_poller: None,
+            worktree_list: Vec::new(),
+            worktree_list_error: None,
+            worktree_list_refresh_in_progress: false,
+            shared_dirs_write_notice_shown: false,
             stream_controller: None,
             running_commands: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
@@ -1641,6 +1810,11 @@ impl ChatWidget {
             unified_exec_sessions: Vec::new(),
             hook_processes: Vec::new(),
             mcp_startup_status: None,
+            mcp_failed_servers: Vec::new(),
+            mcp_startup_started_at: None,
+            mcp_startup_duration: None,
+            mcp_server_start_times: HashMap::new(),
+            mcp_startup_durations: HashMap::new(),
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
@@ -1664,7 +1838,8 @@ impl ChatWidget {
             widget.config.tui_status_bar_show_git_branch,
             widget.config.tui_status_bar_show_worktree,
         );
-        widget.spawn_status_bar_git_context_probe();
+        widget.refresh_status_bar_git_poller();
+        widget.spawn_worktree_detection(false);
 
         widget.prefetch_rate_limits();
 
@@ -1739,6 +1914,11 @@ impl ChatWidget {
             rate_limit_warnings: RateLimitWarningState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             rate_limit_poller: None,
+            status_bar_git_poller: None,
+            worktree_list: Vec::new(),
+            worktree_list_error: None,
+            worktree_list_refresh_in_progress: false,
+            shared_dirs_write_notice_shown: false,
             stream_controller: None,
             running_commands: HashMap::new(),
             suppressed_exec_calls: HashSet::new(),
@@ -1747,6 +1927,11 @@ impl ChatWidget {
             unified_exec_sessions: Vec::new(),
             hook_processes: Vec::new(),
             mcp_startup_status: None,
+            mcp_failed_servers: Vec::new(),
+            mcp_startup_started_at: None,
+            mcp_startup_duration: None,
+            mcp_server_start_times: HashMap::new(),
+            mcp_startup_durations: HashMap::new(),
             interrupts: InterruptManager::new(),
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
@@ -1770,7 +1955,8 @@ impl ChatWidget {
             widget.config.tui_status_bar_show_git_branch,
             widget.config.tui_status_bar_show_worktree,
         );
-        widget.spawn_status_bar_git_context_probe();
+        widget.refresh_status_bar_git_poller();
+        widget.spawn_worktree_detection(false);
 
         widget.prefetch_rate_limits();
 
@@ -1818,6 +2004,51 @@ impl ChatWidget {
                 self.bottom_pane.clear_ctrl_c_quit_hint();
             }
             _ => {}
+        }
+
+        if matches!(
+            key_event,
+            KeyEvent {
+                code: KeyCode::Char('r' | 'R'),
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                ..
+            }
+        ) && !self.mcp_failed_servers.is_empty()
+            && self.queued_user_messages.is_empty()
+            && self.composer_is_empty()
+            && self.is_normal_backtrack_mode()
+        {
+            let servers = std::mem::take(&mut self.mcp_failed_servers);
+            self.set_mcp_startup_banner(None);
+            self.add_info_message("Retrying failed MCP servers…".to_string(), None);
+            self.submit_op(Op::McpRetry { servers });
+            return;
+        }
+
+        if matches!(
+            key_event,
+            KeyEvent {
+                code: KeyCode::Char('o' | 'O'),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                ..
+            }
+        ) && self.queued_user_messages.is_empty()
+            && self.composer_is_empty()
+            && self.is_normal_backtrack_mode()
+        {
+            let status_cell = self.status_menu_status_cell();
+            let view = crate::bottom_pane::StatusMenuView::new(
+                crate::bottom_pane::StatusMenuTab::Tools,
+                self.app_event_tx.clone(),
+                status_cell,
+                self.config.tui_status_bar_show_git_branch,
+                self.config.tui_status_bar_show_worktree,
+            );
+            self.bottom_pane.show_view(Box::new(view));
+            self.request_redraw();
+            return;
         }
 
         match key_event {
@@ -2002,14 +2233,51 @@ impl ChatWidget {
             SlashCommand::Skills => {
                 self.insert_str("$");
             }
-            SlashCommand::Status => {
-                self.add_status_output();
+            SlashCommand::Help => {
+                self.add_help_topics_output();
             }
-            SlashCommand::Settings => {
-                self.add_settings_output_with_values(
+            SlashCommand::Status => {
+                let status_cell = self.status_menu_status_cell();
+                let view = crate::bottom_pane::StatusMenuView::new(
+                    crate::bottom_pane::StatusMenuTab::Status,
+                    self.app_event_tx.clone(),
+                    status_cell,
                     self.config.tui_status_bar_show_git_branch,
                     self.config.tui_status_bar_show_worktree,
                 );
+                self.bottom_pane.show_view(Box::new(view));
+                self.request_redraw();
+            }
+            SlashCommand::Settings => {
+                let status_cell = self.status_menu_status_cell();
+                let view = crate::bottom_pane::StatusMenuView::new(
+                    crate::bottom_pane::StatusMenuTab::Settings,
+                    self.app_event_tx.clone(),
+                    status_cell,
+                    self.config.tui_status_bar_show_git_branch,
+                    self.config.tui_status_bar_show_worktree,
+                );
+                self.bottom_pane.show_view(Box::new(view));
+                self.request_redraw();
+            }
+            SlashCommand::StatusMenu => {
+                let status_cell = self.status_menu_status_cell();
+                let view = crate::bottom_pane::StatusMenuView::new(
+                    crate::bottom_pane::StatusMenuTab::Status,
+                    self.app_event_tx.clone(),
+                    status_cell,
+                    self.config.tui_status_bar_show_git_branch,
+                    self.config.tui_status_bar_show_worktree,
+                );
+                self.bottom_pane.show_view(Box::new(view));
+                self.request_redraw();
+            }
+            SlashCommand::Worktree => {
+                if self.worktree_list.is_empty() && !self.worktree_list_refresh_in_progress {
+                    self.spawn_worktree_detection(true);
+                } else {
+                    self.open_worktree_picker();
+                }
             }
             SlashCommand::Ps => {
                 self.add_ps_output();
@@ -2151,6 +2419,66 @@ impl ChatWidget {
         }
 
         let mut items: Vec<UserInput> = Vec::new();
+
+        if image_paths.is_empty()
+            && text.lines().count() == 1
+            && let Some((name, rest)) = parse_slash_name(text.as_str())
+            && name == "mcp"
+        {
+            let args: Vec<&str> = rest.split_whitespace().collect();
+            match args.as_slice() {
+                [] | ["list"] => {
+                    self.dispatch_command(SlashCommand::Mcp);
+                }
+                ["retry"] | ["retry", "failed"] => {
+                    if self.mcp_failed_servers.is_empty() {
+                        self.add_info_message("No failed MCP servers to retry.".to_string(), None);
+                    } else {
+                        let servers = self.mcp_failed_servers.clone();
+                        self.set_mcp_startup_banner(None);
+                        self.submit_op(Op::McpRetry { servers });
+                    }
+                }
+                ["retry", server] => {
+                    self.set_mcp_startup_banner(None);
+                    self.submit_op(Op::McpRetry {
+                        servers: vec![(*server).to_string()],
+                    });
+                }
+                ["timeout", server, seconds] => {
+                    let secs: u64 = match seconds.parse() {
+                        Ok(secs) => secs,
+                        Err(_) => {
+                            self.add_info_message(
+                                "Usage: /mcp timeout <name> <seconds>".to_string(),
+                                None,
+                            );
+                            return;
+                        }
+                    };
+                    let server = (*server).to_string();
+                    self.set_mcp_startup_banner(None);
+                    self.app_event_tx.send(AppEvent::PersistMcpStartupTimeout {
+                        server: server.clone(),
+                        startup_timeout_sec: secs,
+                    });
+                    self.submit_op(Op::McpSetStartupTimeout {
+                        server: server.clone(),
+                        startup_timeout_sec: secs,
+                    });
+                    self.submit_op(Op::McpRetry {
+                        servers: vec![server],
+                    });
+                }
+                _ => {
+                    self.add_info_message(
+                        "Usage: /mcp [list] | /mcp retry [failed|<name>] | /mcp timeout <name> <seconds>".to_string(),
+                        None,
+                    );
+                }
+            }
+            return;
+        }
 
         // Special-case: "!cmd" executes a local shell command instead of sending to the model.
         if let Some(stripped) = text.strip_prefix('!') {
@@ -2339,6 +2667,660 @@ impl ChatWidget {
             }
 
             self.add_settings_output_with_values(next_git_branch, next_worktree);
+            return;
+        }
+
+        if image_paths.is_empty()
+            && text.lines().count() == 1
+            && let Some((name, rest)) = parse_slash_name(text.as_str())
+            && name == "help"
+        {
+            let args: Vec<&str> = rest.split_whitespace().collect();
+            let topic = match args.as_slice() {
+                [] => {
+                    self.add_help_topics_output();
+                    return;
+                }
+                [topic] => topic.to_ascii_lowercase(),
+                _ => {
+                    self.add_info_message("Usage: /help <topic>".to_string(), None);
+                    return;
+                }
+            };
+
+            match topic.as_str() {
+                "xcodex" => {
+                    self.add_help_xcodex_output();
+                }
+                _ => {
+                    self.add_info_message(
+                        format!("Unknown help topic `{topic}`. Try: /help xcodex"),
+                        None,
+                    );
+                }
+            }
+            return;
+        }
+
+        if image_paths.is_empty()
+            && text.lines().count() == 1
+            && let Some((name, rest)) = parse_slash_name(text.as_str())
+            && name == "worktree"
+        {
+            let args: Vec<&str> = rest.split_whitespace().collect();
+            match args.as_slice() {
+                [] => {
+                    self.dispatch_command(SlashCommand::Worktree);
+                }
+                ["detect"] | ["refresh"] => {
+                    self.spawn_worktree_detection(true);
+                }
+                ["shared"] | ["shared", "list"] => {
+                    self.add_worktree_shared_dirs_output();
+                }
+                ["shared", "add", dir] => {
+                    fn normalize_shared_dir_arg(raw: &str) -> Result<String, String> {
+                        use std::path::Component;
+                        use std::path::Path;
+
+                        let mut value = raw.trim().trim_end_matches(['/', '\\']).to_string();
+                        while value.starts_with("./") {
+                            value = value.trim_start_matches("./").to_string();
+                        }
+                        if value.is_empty() {
+                            return Err(String::from("shared dir is empty"));
+                        }
+                        if value.starts_with('~') {
+                            return Err(String::from("shared dirs must be repo-relative (no '~')"));
+                        }
+
+                        let path = Path::new(&value);
+                        if path.is_absolute() {
+                            return Err(String::from("shared dirs must be repo-relative"));
+                        }
+
+                        for component in path.components() {
+                            match component {
+                                Component::ParentDir
+                                | Component::RootDir
+                                | Component::Prefix(_) => {
+                                    return Err(String::from(
+                                        "shared dirs must not contain parent/root components",
+                                    ));
+                                }
+                                Component::CurDir => {}
+                                Component::Normal(_) => {}
+                            }
+                        }
+
+                        Ok(value)
+                    }
+
+                    let dir = match normalize_shared_dir_arg(dir) {
+                        Ok(dir) => dir,
+                        Err(err) => {
+                            self.add_error_message(format!("`/worktree shared add` — {err}"));
+                            return;
+                        }
+                    };
+
+                    let mut next = self.config.worktrees_shared_dirs.clone();
+                    if next.contains(&dir) {
+                        self.add_info_message(
+                            format!("Shared dir already configured: `{dir}`"),
+                            Some(String::from("Tip: run `/worktree shared list`")),
+                        );
+                        return;
+                    }
+                    next.push(dir);
+                    self.config.worktrees_shared_dirs = next.clone();
+                    self.app_event_tx.send(AppEvent::UpdateWorktreesSharedDirs {
+                        shared_dirs: next.clone(),
+                    });
+                    self.app_event_tx
+                        .send(AppEvent::PersistWorktreesSharedDirs { shared_dirs: next });
+                    self.add_worktree_shared_dirs_output();
+                }
+                ["shared", "rm", dir] | ["shared", "remove", dir] => {
+                    fn normalize_shared_dir_arg(raw: &str) -> Result<String, String> {
+                        use std::path::Component;
+                        use std::path::Path;
+
+                        let mut value = raw.trim().trim_end_matches(['/', '\\']).to_string();
+                        while value.starts_with("./") {
+                            value = value.trim_start_matches("./").to_string();
+                        }
+                        if value.is_empty() {
+                            return Err(String::from("shared dir is empty"));
+                        }
+                        if value.starts_with('~') {
+                            return Err(String::from("shared dirs must be repo-relative (no '~')"));
+                        }
+
+                        let path = Path::new(&value);
+                        if path.is_absolute() {
+                            return Err(String::from("shared dirs must be repo-relative"));
+                        }
+
+                        for component in path.components() {
+                            match component {
+                                Component::ParentDir
+                                | Component::RootDir
+                                | Component::Prefix(_) => {
+                                    return Err(String::from(
+                                        "shared dirs must not contain parent/root components",
+                                    ));
+                                }
+                                Component::CurDir => {}
+                                Component::Normal(_) => {}
+                            }
+                        }
+
+                        Ok(value)
+                    }
+
+                    let dir = match normalize_shared_dir_arg(dir) {
+                        Ok(dir) => dir,
+                        Err(err) => {
+                            self.add_error_message(format!("`/worktree shared rm` — {err}"));
+                            return;
+                        }
+                    };
+
+                    let mut next: Vec<String> = Vec::new();
+                    let mut removed = 0usize;
+                    for entry in &self.config.worktrees_shared_dirs {
+                        let normalized_entry =
+                            normalize_shared_dir_arg(entry).unwrap_or_else(|_| entry.clone());
+                        if normalized_entry == dir {
+                            removed += 1;
+                            continue;
+                        }
+                        next.push(entry.clone());
+                    }
+                    if removed == 0 {
+                        self.add_error_message(format!(
+                            "`/worktree shared rm` — `{dir}` is not in `worktrees.shared_dirs`"
+                        ));
+                        return;
+                    }
+                    self.config.worktrees_shared_dirs = next.clone();
+                    self.app_event_tx.send(AppEvent::UpdateWorktreesSharedDirs {
+                        shared_dirs: next.clone(),
+                    });
+                    self.app_event_tx
+                        .send(AppEvent::PersistWorktreesSharedDirs { shared_dirs: next });
+                    self.add_worktree_shared_dirs_output();
+                }
+                ["init", name, branch] | ["init", name, branch, ..] => {
+                    let provided_path = args.get(3).copied();
+                    if args.len() > 4 {
+                        self.add_info_message(
+                            "Usage: /worktree init <name> <branch> [<path>]".to_string(),
+                            None,
+                        );
+                        return;
+                    }
+
+                    let cwd = self.config.cwd.clone();
+                    let shared_dirs = self.config.worktrees_shared_dirs.clone();
+                    let tx = self.app_event_tx.clone();
+                    let name = name.to_string();
+                    let branch = branch.to_string();
+                    let path = provided_path.map(PathBuf::from);
+                    tokio::spawn(async move {
+                        let Some(current_root) =
+                            codex_core::git_info::resolve_git_worktree_head(&cwd)
+                                .map(|head| head.worktree_root)
+                        else {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(String::from(
+                                    "`/worktree init` — not inside a git worktree (start xcodex in a repo/worktree directory, or switch via `/worktree`)",
+                                )),
+                            )));
+                            return;
+                        };
+
+                        let Some(workspace_root) =
+                            codex_core::git_info::resolve_root_git_project_for_trust(&current_root)
+                        else {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(String::from(
+                                    "`/worktree init` — failed to resolve workspace root (the main worktree root for this repo)",
+                                )),
+                            )));
+                            return;
+                        };
+
+                        let result = codex_core::git_info::init_git_worktree(
+                            &workspace_root,
+                            &name,
+                            &branch,
+                            path.as_deref(),
+                        )
+                        .await;
+
+                        let path = match result {
+                            Ok(path) => path,
+                            Err(err) => {
+                                let resolved_path = if let Some(path) = &path {
+                                    if path.is_absolute() {
+                                        path.clone()
+                                    } else {
+                                        workspace_root.join(path)
+                                    }
+                                } else {
+                                    workspace_root.join(".worktrees").join(&name)
+                                };
+                                let mut lines: Vec<Line<'static>> = Vec::new();
+                                lines.push(Line::from("worktree init"));
+                                lines.push(Line::from(format!("error: {err}")));
+                                lines.push(Line::from(""));
+                                lines.push(Line::from("Try running this outside xcodex:"));
+                                lines.push(Line::from(format!(
+                                    "  git -C {} worktree add -b {} {}",
+                                    workspace_root.display(),
+                                    branch,
+                                    resolved_path.display()
+                                )));
+                                lines.push(Line::from(format!(
+                                    "  git -C {} worktree add {} {}   (if branch already exists)",
+                                    workspace_root.display(),
+                                    resolved_path.display(),
+                                    branch
+                                )));
+                                lines.push(Line::from(format!(
+                                    "  git -C {} worktree list --porcelain",
+                                    workspace_root.display()
+                                )));
+                                tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                    PlainHistoryCell::new(lines),
+                                )));
+                                return;
+                            }
+                        };
+
+                        let mut lines: Vec<Line<'static>> = Vec::new();
+                        lines.push(Line::from("worktree init"));
+                        lines.push(Line::from(format!(
+                            "workspace root: {}",
+                            workspace_root.display()
+                        )));
+                        lines.push(Line::from(format!("created: {}", path.display())));
+
+                        if !shared_dirs.is_empty() {
+                            let actions = codex_core::git_info::link_worktree_shared_dirs(
+                                &path,
+                                &workspace_root,
+                                &shared_dirs,
+                            )
+                            .await;
+
+                            let mut linked_dirs: Vec<(String, PathBuf)> = Vec::new();
+                            for action in actions {
+                                if matches!(
+                                    action.outcome,
+                                    codex_core::git_info::SharedDirLinkOutcome::Linked
+                                        | codex_core::git_info::SharedDirLinkOutcome::AlreadyLinked
+                                ) {
+                                    linked_dirs.push((action.shared_dir, action.target_path));
+                                }
+                            }
+
+                            if !linked_dirs.is_empty() {
+                                lines.push(Line::from(""));
+                                lines.push(Line::from(
+                                    "Shared dirs (writes land in workspace root):",
+                                ));
+                                for (dir, target) in linked_dirs {
+                                    lines.push(Line::from(format!(
+                                        "- {dir} -> {}",
+                                        target.display()
+                                    )));
+                                }
+                            }
+                        }
+
+                        tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            PlainHistoryCell::new(lines),
+                        )));
+
+                        tx.send(AppEvent::WorktreeSwitched(path.clone()));
+                        tx.send(AppEvent::CodexOp(
+                            codex_core::protocol::Op::OverrideTurnContext {
+                                cwd: Some(path.clone()),
+                                approval_policy: None,
+                                sandbox_policy: None,
+                                model: None,
+                                effort: None,
+                                summary: None,
+                            },
+                        ));
+                        tx.send(AppEvent::CodexOp(codex_core::protocol::Op::ListSkills {
+                            cwds: vec![path],
+                            force_reload: true,
+                        }));
+                    });
+                }
+                ["doctor"] => {
+                    let cwd = self.config.cwd.clone();
+                    let shared_dirs = self.config.worktrees_shared_dirs.clone();
+                    let tx = self.app_event_tx.clone();
+                    tokio::spawn(async move {
+                        let lines =
+                            codex_core::git_info::worktree_doctor_lines(&cwd, &shared_dirs, 5)
+                                .await;
+                        let lines = lines.into_iter().map(Line::from).collect();
+                        tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            PlainHistoryCell::new(lines),
+                        )));
+                    });
+                }
+                ["link-shared", "migrate"] | ["link-shared", "--migrate"] => {
+                    if self.config.worktrees_shared_dirs.is_empty() {
+                        self.add_info_message(
+                            "No shared dirs configured. Set `worktrees.shared_dirs` in config first."
+                                .to_string(),
+                            None,
+                        );
+                        return;
+                    }
+
+                    let show_notice = !self.shared_dirs_write_notice_shown;
+                    self.shared_dirs_write_notice_shown = true;
+
+                    let cwd = self.config.cwd.clone();
+                    let shared_dirs = self.config.worktrees_shared_dirs.clone();
+                    let tx = self.app_event_tx.clone();
+                    tokio::spawn(async move {
+                        let Some(worktree_root) =
+                            codex_core::git_info::resolve_git_worktree_head(&cwd)
+                                .map(|head| head.worktree_root)
+                        else {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(String::from(
+                                    "`/worktree link-shared` — not inside a git worktree (start xcodex in a repo/worktree directory, or switch via `/worktree`)",
+                                )),
+                            )));
+                            return;
+                        };
+
+                        let Some(workspace_root) =
+                            codex_core::git_info::resolve_root_git_project_for_trust(
+                                &worktree_root,
+                            )
+                        else {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(String::from(
+                                    "`/worktree link-shared` — failed to resolve workspace root (the main worktree root for this repo)",
+                                )),
+                            )));
+                            return;
+                        };
+
+                        if worktree_root == workspace_root {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_info_event(
+                                    String::from("Already in the workspace root worktree."),
+                                    None,
+                                ),
+                            )));
+                            return;
+                        }
+
+                        let actions =
+                            codex_core::git_info::link_worktree_shared_dirs_migrating_untracked(
+                                &worktree_root,
+                                &workspace_root,
+                                &shared_dirs,
+                            )
+                            .await;
+
+                        let mut lines: Vec<Line<'static>> = Vec::new();
+                        lines.push(Line::from("worktree link-shared --migrate"));
+                        lines.push(Line::from(format!(
+                            "workspace root: {}",
+                            workspace_root.display()
+                        )));
+                        lines.push(Line::from(format!(
+                            "active worktree: {}",
+                            worktree_root.display()
+                        )));
+                        lines.push(Line::from(""));
+
+                        for action in actions {
+                            let shared_dir = action.shared_dir;
+                            match action.outcome {
+                                codex_core::git_info::SharedDirLinkOutcome::Linked => {
+                                    lines.push(Line::from(format!(
+                                        "- {shared_dir}: linked -> {}",
+                                        action.target_path.display()
+                                    )));
+                                }
+                                codex_core::git_info::SharedDirLinkOutcome::AlreadyLinked => {
+                                    lines.push(Line::from(format!(
+                                        "- {shared_dir}: already linked -> {}",
+                                        action.target_path.display()
+                                    )));
+                                }
+                                codex_core::git_info::SharedDirLinkOutcome::Skipped(reason) => {
+                                    lines.push(Line::from(format!(
+                                        "- {shared_dir}: skipped ({reason})"
+                                    )));
+                                }
+                                codex_core::git_info::SharedDirLinkOutcome::Failed(reason) => {
+                                    lines.push(Line::from(format!(
+                                        "- {shared_dir}: failed ({reason})"
+                                    )));
+                                }
+                            }
+                        }
+
+                        if show_notice {
+                            lines.push(Line::from(""));
+                            lines.push(Line::from(
+                                "Note: shared dirs are linked into the workspace root; writes under them persist across worktrees.",
+                            ));
+                        }
+
+                        tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            PlainHistoryCell::new(lines),
+                        )));
+                    });
+                }
+                ["link-shared"] => {
+                    if self.config.worktrees_shared_dirs.is_empty() {
+                        self.add_info_message(
+                            "No shared dirs configured. Set `worktrees.shared_dirs` in config first."
+                                .to_string(),
+                            None,
+                        );
+                        return;
+                    }
+
+                    let show_notice = !self.shared_dirs_write_notice_shown;
+                    self.shared_dirs_write_notice_shown = true;
+
+                    let cwd = self.config.cwd.clone();
+                    let shared_dirs = self.config.worktrees_shared_dirs.clone();
+                    let tx = self.app_event_tx.clone();
+                    tokio::spawn(async move {
+                        let Some(worktree_root) =
+                            codex_core::git_info::resolve_git_worktree_head(&cwd)
+                                .map(|head| head.worktree_root)
+                        else {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(String::from(
+                                    "`/worktree link-shared` — not inside a git worktree (start xcodex in a repo/worktree directory, or switch via `/worktree`)",
+                                )),
+                            )));
+                            return;
+                        };
+
+                        let Some(workspace_root) =
+                            codex_core::git_info::resolve_root_git_project_for_trust(
+                                &worktree_root,
+                            )
+                        else {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_error_event(String::from(
+                                    "`/worktree link-shared` — failed to resolve workspace root (the main worktree root for this repo)",
+                                )),
+                            )));
+                            return;
+                        };
+
+                        if worktree_root == workspace_root {
+                            tx.send(AppEvent::InsertHistoryCell(Box::new(
+                                history_cell::new_info_event(
+                                    String::from("Already in the workspace root worktree."),
+                                    None,
+                                ),
+                            )));
+                            return;
+                        }
+
+                        let actions = codex_core::git_info::link_worktree_shared_dirs(
+                            &worktree_root,
+                            &workspace_root,
+                            &shared_dirs,
+                        )
+                        .await;
+
+                        let mut lines: Vec<Line<'static>> = Vec::new();
+                        lines.push(Line::from("worktree link-shared"));
+                        lines.push(Line::from(format!(
+                            "workspace root: {}",
+                            workspace_root.display()
+                        )));
+                        lines.push(Line::from(format!(
+                            "active worktree: {}",
+                            worktree_root.display()
+                        )));
+                        lines.push(Line::from(""));
+
+                        for action in actions {
+                            let shared_dir = action.shared_dir;
+                            match action.outcome {
+                                codex_core::git_info::SharedDirLinkOutcome::Linked => {
+                                    lines.push(Line::from(format!(
+                                        "- {shared_dir}: linked -> {}",
+                                        action.target_path.display()
+                                    )));
+                                }
+                                codex_core::git_info::SharedDirLinkOutcome::AlreadyLinked => {
+                                    lines.push(Line::from(format!(
+                                        "- {shared_dir}: already linked -> {}",
+                                        action.target_path.display()
+                                    )));
+                                }
+                                codex_core::git_info::SharedDirLinkOutcome::Skipped(reason) => {
+                                    lines.push(Line::from(format!(
+                                        "- {shared_dir}: skipped ({reason})"
+                                    )));
+                                }
+                                codex_core::git_info::SharedDirLinkOutcome::Failed(reason) => {
+                                    lines.push(Line::from(format!(
+                                        "- {shared_dir}: failed ({reason})"
+                                    )));
+                                }
+                            }
+                        }
+
+                        if show_notice {
+                            lines.push(Line::from(""));
+                            lines.push(Line::from(
+                                "Note: shared dirs are linked into the workspace root; writes under them persist across worktrees.",
+                            ));
+                        }
+
+                        tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            PlainHistoryCell::new(lines),
+                        )));
+                    });
+                }
+                [target] => {
+                    let matches: Vec<&GitWorktreeEntry> = self
+                        .worktree_list
+                        .iter()
+                        .filter(|entry| {
+                            entry
+                                .path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .is_some_and(|name| name.eq_ignore_ascii_case(target))
+                        })
+                        .collect();
+
+                    let selected_path = if matches.len() == 1 {
+                        Some(matches[0].path.clone())
+                    } else if matches.len() > 1 {
+                        self.add_info_message(
+                            format!(
+                                "Multiple worktrees match `{target}`. Use a full path or run `/worktree` to pick."
+                            ),
+                            None,
+                        );
+                        None
+                    } else {
+                        let candidate = PathBuf::from(target);
+                        let candidate = if candidate.is_absolute() {
+                            candidate
+                        } else {
+                            self.config.cwd.join(candidate)
+                        };
+                        if candidate.is_dir() {
+                            Some(candidate)
+                        } else {
+                            if self.worktree_list.is_empty()
+                                && !self.worktree_list_refresh_in_progress
+                            {
+                                self.spawn_worktree_detection(true);
+                                self.add_info_message(
+                                    format!(
+                                        "Unknown worktree `{target}`. Refreshing worktrees; run `/worktree` to pick."
+                                    ),
+                                    None,
+                                );
+                            } else {
+                                self.add_info_message(
+                                    format!(
+                                        "Unknown worktree `{target}`. Run `/worktree` to pick or `/worktree detect` to refresh."
+                                    ),
+                                    None,
+                                );
+                            }
+                            None
+                        }
+                    };
+
+                    if let Some(path) = selected_path {
+                        self.app_event_tx
+                            .send(AppEvent::WorktreeSwitched(path.clone()));
+                        self.app_event_tx
+                            .send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                                cwd: Some(path.clone()),
+                                approval_policy: None,
+                                sandbox_policy: None,
+                                model: None,
+                                effort: None,
+                                summary: None,
+                            }));
+                        self.app_event_tx.send(AppEvent::CodexOp(Op::ListSkills {
+                            cwds: vec![path],
+                            force_reload: true,
+                        }));
+                    }
+                }
+                _ => {
+                    self.add_info_message(
+                        "Usage: /worktree [detect|doctor|shared|init|link-shared [--migrate]|<name|path>]"
+                            .to_string(),
+                        None,
+                    );
+                }
+            }
+
             return;
         }
 
@@ -2673,10 +3655,26 @@ impl ChatWidget {
         )
     }
 
-    pub(crate) fn add_status_output(&mut self) {
-        let command = PlainHistoryCell::new(vec![Line::from(vec!["/status".magenta()])]);
-        let card = self.status_output_cell();
-        self.add_to_history(CompositeHistoryCell::new(vec![Box::new(command), card]));
+    pub(crate) fn status_menu_status_cell(&self) -> Box<dyn HistoryCell> {
+        let default_usage = TokenUsage::default();
+        let (total_usage, context_usage) = if let Some(ti) = &self.token_info {
+            (&ti.total_token_usage, Some(&ti.last_token_usage))
+        } else {
+            (&default_usage, Some(&default_usage))
+        };
+        crate::status::new_status_menu_summary_card(
+            &self.config,
+            self.auth_manager.as_ref(),
+            &self.model_family,
+            self.auto_compact_enabled,
+            total_usage,
+            context_usage,
+            &self.conversation_id,
+            self.rate_limit_snapshot.as_ref(),
+            self.plan_type,
+            Local::now(),
+            self.model_family.get_model_slug(),
+        )
     }
 
     pub(crate) fn add_settings_output_with_values(
@@ -2687,6 +3685,178 @@ impl ChatWidget {
         let command = PlainHistoryCell::new(vec![Line::from(vec!["/settings".magenta()])]);
         let card = crate::status::new_settings_card(show_git_branch, show_worktree);
         self.add_to_history(CompositeHistoryCell::new(vec![Box::new(command), card]));
+    }
+
+    pub(crate) fn add_help_topics_output(&mut self) {
+        let command = PlainHistoryCell::new(vec![Line::from(vec!["/help".magenta()])]);
+        let body = PlainHistoryCell::new(vec![
+            vec!["Topics: ".into(), "xcodex".cyan().bold()].into(),
+            vec!["Try: ".dim(), "/help xcodex".cyan()].into(),
+        ]);
+        self.add_to_history(CompositeHistoryCell::new(vec![
+            Box::new(command),
+            Box::new(body),
+        ]));
+    }
+
+    pub(crate) fn add_worktree_shared_dirs_output(&mut self) {
+        let command = PlainHistoryCell::new(vec![Line::from(vec!["/worktree shared".magenta()])]);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+
+        lines.push(
+            vec![
+                "worktrees.shared_dirs".cyan().bold(),
+                " (shared across worktrees)".dim(),
+            ]
+            .into(),
+        );
+
+        if self.config.worktrees_shared_dirs.is_empty() {
+            lines.push(vec!["(none)".dim()].into());
+        } else {
+            for dir in &self.config.worktrees_shared_dirs {
+                lines.push(vec!["- ".dim(), dir.clone().into()].into());
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(vec!["Add: ".dim(), "/worktree shared add <dir>".cyan()].into());
+        lines.push(vec!["Remove: ".dim(), "/worktree shared rm <dir>".cyan()].into());
+        lines.push(
+            vec![
+                "Apply: ".dim(),
+                "/worktree link-shared".cyan(),
+                " ".dim(),
+                "(in current worktree)".dim(),
+            ]
+            .into(),
+        );
+        lines.push(vec!["Docs: ".dim(), "docs/xcodex/worktrees.md".cyan()].into());
+
+        self.add_to_history(CompositeHistoryCell::new(vec![
+            Box::new(command),
+            Box::new(PlainHistoryCell::new(lines)),
+        ]));
+    }
+
+    pub(crate) fn add_help_xcodex_output(&mut self) {
+        let command = PlainHistoryCell::new(vec![Line::from(vec!["/help xcodex".magenta()])]);
+        let body = PlainHistoryCell::new(vec![
+            vec!["xcodex".cyan().bold(), " additions in this UI".dim()].into(),
+            vec![
+                "• ".dim(),
+                "/settings".cyan(),
+                " — ".dim(),
+                "status bar items (git branch/worktree)".into(),
+            ]
+            .into(),
+            vec![
+                "  ".into(),
+                "Try: ".dim(),
+                "/settings status-bar git-branch toggle".cyan(),
+            ]
+            .into(),
+            vec![
+                "• ".dim(),
+                "xcodex config".cyan(),
+                " — ".dim(),
+                "edit or diagnose $CODEX_HOME/config.toml".into(),
+            ]
+            .into(),
+            vec!["  ".into(), "Try: ".dim(), "xcodex config edit".cyan()].into(),
+            vec!["  ".into(), "Try: ".dim(), "xcodex config doctor".cyan()].into(),
+            vec![
+                "• ".dim(),
+                "/worktree".cyan(),
+                " — ".dim(),
+                "switch this session between git worktrees".into(),
+            ]
+            .into(),
+            vec![
+                "  ".into(),
+                "Contract: ".dim(),
+                "tool cwd = active worktree root".into(),
+            ]
+            .into(),
+            vec![
+                "  ".into(),
+                "Shared dirs (opt-in): ".dim(),
+                "linked back to workspace root (writes land there)".into(),
+            ]
+            .into(),
+            vec![
+                "  ".into(),
+                "Pinned paths (opt-in): ".dim(),
+                "worktrees.pinned_paths".cyan(),
+                " ".dim(),
+                "(file tools only)".dim(),
+            ]
+            .into(),
+            vec![
+                "  ".into(),
+                "Docs: ".dim(),
+                "docs/xcodex/worktrees.md".cyan(),
+            ]
+            .into(),
+            vec!["  ".into(), "Try: ".dim(), "/worktree detect".cyan()].into(),
+            vec![
+                "  ".into(),
+                "Try: ".dim(),
+                "/worktree doctor".cyan(),
+                " ".dim(),
+                "(shared dirs / untracked)".dim(),
+            ]
+            .into(),
+            vec![
+                "  ".into(),
+                "Try: ".dim(),
+                "/worktree link-shared".cyan(),
+                " ".dim(),
+                "(apply shared-dir links)".dim(),
+            ]
+            .into(),
+            vec![
+                "  ".into(),
+                "Try: ".dim(),
+                "/worktree link-shared --migrate".cyan(),
+                " ".dim(),
+                "(migrate git-untracked files, then link)".dim(),
+            ]
+            .into(),
+            vec![
+                "  ".into(),
+                "Try: ".dim(),
+                "/worktree shared add docs/impl-plans".cyan(),
+                " ".dim(),
+                "(configure shared dirs)".dim(),
+            ]
+            .into(),
+            vec![
+                "• ".dim(),
+                "/ps".cyan(),
+                " — ".dim(),
+                "list background terminals + hooks".into(),
+            ]
+            .into(),
+            vec![
+                "• ".dim(),
+                "/ps-kill".cyan(),
+                " — ".dim(),
+                "terminate background terminals".into(),
+            ]
+            .into(),
+            vec![
+                "• ".dim(),
+                "/thoughts".cyan(),
+                " — ".dim(),
+                "show/hide agent reasoning".into(),
+            ]
+            .into(),
+        ]);
+        self.add_to_history(CompositeHistoryCell::new(vec![
+            Box::new(command),
+            Box::new(body),
+        ]));
     }
 
     pub(crate) fn add_ps_output(&mut self) {
@@ -2788,9 +3958,20 @@ impl ChatWidget {
         }
     }
 
-    fn spawn_status_bar_git_context_probe(&self) {
+    fn stop_status_bar_git_poller(&mut self) {
+        if let Some(handle) = self.status_bar_git_poller.take() {
+            handle.abort();
+        }
+    }
+
+    fn refresh_status_bar_git_poller(&mut self) {
+        self.stop_status_bar_git_poller();
+
         let show_branch = self.config.tui_status_bar_show_git_branch;
         let show_worktree = self.config.tui_status_bar_show_worktree;
+
+        self.bottom_pane.set_status_bar_git_context(None, None);
+
         if !show_branch && !show_worktree {
             return;
         }
@@ -2798,20 +3979,101 @@ impl ChatWidget {
         let cwd = self.config.cwd.clone();
         let tx = self.app_event_tx.clone();
 
-        tokio::spawn(async move {
-            let worktree_root = show_worktree
-                .then(|| codex_core::git_info::get_git_repo_root(&cwd))
-                .flatten();
-            let git_branch = if show_branch {
-                codex_core::git_info::current_branch_name(&cwd).await
-            } else {
-                None
-            };
-            tx.send(AppEvent::UpdateStatusBarGitContext {
-                git_branch,
-                worktree_root,
-            });
+        let handle = tokio::spawn(async move {
+            use notify::RecursiveMode;
+            use notify::Watcher as _;
+
+            let mut last_branch: Option<String> = None;
+            let mut last_worktree_root: Option<PathBuf> = None;
+
+            let (fs_tx, mut fs_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
+            let mut watched_head_path: Option<PathBuf> = None;
+            let mut watcher: Option<notify::RecommendedWatcher> = None;
+
+            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+            let mut dirty = true;
+
+            loop {
+                if dirty {
+                    dirty = false;
+
+                    let Some(worktree_head) = codex_core::git_info::resolve_git_worktree_head(&cwd)
+                    else {
+                        watched_head_path = None;
+                        watcher = None;
+
+                        if last_branch.is_some() || last_worktree_root.is_some() {
+                            last_branch = None;
+                            last_worktree_root = None;
+                            tx.send(AppEvent::UpdateStatusBarGitContext {
+                                git_branch: None,
+                                worktree_root: None,
+                            });
+                        }
+                        continue;
+                    };
+
+                    if watched_head_path.as_ref() != Some(&worktree_head.head_path) {
+                        watched_head_path = Some(worktree_head.head_path.clone());
+                        watcher = None;
+                    }
+
+                    if watcher.is_none()
+                        && let Ok(mut new_watcher) = notify::recommended_watcher({
+                            let fs_tx = fs_tx.clone();
+                            move |res: Result<notify::Event, notify::Error>| {
+                                if res.is_ok() {
+                                    let _ = fs_tx.send(());
+                                }
+                            }
+                        })
+                        && new_watcher
+                            .watch(&worktree_head.head_path, RecursiveMode::NonRecursive)
+                            .is_ok()
+                    {
+                        watcher = Some(new_watcher);
+                    }
+
+                    let worktree_root = (show_worktree && !worktree_head.is_bare)
+                        .then(|| worktree_head.worktree_root.clone());
+                    let git_branch = if show_branch {
+                        match codex_core::git_info::read_git_head_state(&worktree_head.head_path) {
+                            Some(codex_core::git_info::GitHeadState::Branch(branch)) => {
+                                Some(branch)
+                            }
+                            Some(codex_core::git_info::GitHeadState::Detached) => {
+                                Some(String::from("(detached)"))
+                            }
+                            None => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    if git_branch != last_branch || worktree_root != last_worktree_root {
+                        last_branch = git_branch.clone();
+                        last_worktree_root = worktree_root.clone();
+                        tx.send(AppEvent::UpdateStatusBarGitContext {
+                            git_branch,
+                            worktree_root,
+                        });
+                    }
+                }
+
+                tokio::select! {
+                    _ = interval.tick() => {
+                        dirty = true;
+                    }
+                    Some(()) = fs_rx.recv() => {
+                        dirty = true;
+                    }
+                }
+            }
         });
+
+        self.status_bar_git_poller = Some(handle);
     }
 
     pub(crate) fn set_status_bar_git_context(
@@ -2843,7 +4105,182 @@ impl ChatWidget {
         self.config.tui_status_bar_show_worktree = show_worktree;
         self.bottom_pane
             .set_status_bar_git_options(show_git_branch, show_worktree);
-        self.spawn_status_bar_git_context_probe();
+        self.refresh_status_bar_git_poller();
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_worktrees_shared_dirs(&mut self, shared_dirs: Vec<String>) {
+        self.config.worktrees_shared_dirs = shared_dirs;
+        self.request_redraw();
+    }
+
+    pub(crate) fn spawn_worktree_detection(&mut self, open_picker: bool) {
+        if self.worktree_list_refresh_in_progress {
+            return;
+        }
+        if codex_core::git_info::resolve_git_worktree_head(&self.config.cwd).is_none() {
+            self.worktree_list = Vec::new();
+            self.worktree_list_error = None;
+            self.worktree_list_refresh_in_progress = false;
+            if open_picker {
+                self.open_worktree_picker();
+            }
+            return;
+        }
+
+        self.worktree_list_refresh_in_progress = true;
+
+        let cwd = self.config.cwd.clone();
+        let tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            match codex_core::git_info::try_list_git_worktrees(&cwd).await {
+                Ok(worktrees) => {
+                    tx.send(AppEvent::WorktreeListUpdated {
+                        worktrees,
+                        open_picker,
+                    });
+                }
+                Err(error) => {
+                    tx.send(AppEvent::WorktreeListUpdateFailed { error, open_picker });
+                }
+            }
+        });
+    }
+
+    pub(crate) fn set_worktree_list(
+        &mut self,
+        mut worktrees: Vec<GitWorktreeEntry>,
+        open_picker: bool,
+    ) {
+        worktrees.sort_by(|a, b| a.path.cmp(&b.path));
+        self.worktree_list = worktrees;
+        self.worktree_list_error = None;
+        self.worktree_list_refresh_in_progress = false;
+
+        if open_picker {
+            self.open_worktree_picker();
+        }
+    }
+
+    pub(crate) fn on_worktree_list_update_failed(&mut self, error: String, open_picker: bool) {
+        self.worktree_list = Vec::new();
+        self.worktree_list_error = Some(error);
+        self.worktree_list_refresh_in_progress = false;
+
+        if open_picker {
+            self.open_worktree_picker();
+        }
+    }
+
+    pub(crate) fn set_session_cwd(&mut self, cwd: PathBuf) {
+        self.config.cwd = cwd.clone();
+        self.refresh_status_bar_git_poller();
+        self.spawn_worktree_detection(false);
+
+        let display = crate::exec_command::relativize_to_home(&cwd)
+            .map(|path| {
+                if path.as_os_str().is_empty() {
+                    String::from("~")
+                } else {
+                    format!("~/{}", path.display())
+                }
+            })
+            .unwrap_or_else(|| cwd.display().to_string());
+        self.add_info_message(format!("Session worktree set to {display}."), None);
+    }
+
+    fn open_worktree_picker(&mut self) {
+        let mut items: Vec<SelectionItem> = Vec::new();
+
+        items.push(SelectionItem {
+            name: "Refresh worktrees".to_string(),
+            description: Some("Re-detect worktrees for this session.".to_string()),
+            actions: vec![Box::new(|tx: &AppEventSender| {
+                tx.send(AppEvent::WorktreeDetect { open_picker: true });
+            })],
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        let current_root = codex_core::git_info::resolve_git_worktree_head(&self.config.cwd)
+            .map(|head| head.worktree_root);
+
+        for entry in &self.worktree_list {
+            let path = entry.path.clone();
+            let is_current = current_root.as_ref().is_some_and(|root| root == &path);
+
+            let branch_label = match &entry.head {
+                GitHeadState::Branch(name) => name.clone(),
+                GitHeadState::Detached => String::from("(detached)"),
+            };
+
+            let display = crate::exec_command::relativize_to_home(&path)
+                .map(|path| {
+                    if path.as_os_str().is_empty() {
+                        String::from("~")
+                    } else {
+                        format!("~/{}", path.display())
+                    }
+                })
+                .unwrap_or_else(|| path.display().to_string());
+
+            let mut search = String::new();
+            search.push_str(&branch_label);
+            search.push(' ');
+            search.push_str(&display);
+
+            let actions: Vec<SelectionAction> = if entry.is_bare {
+                Vec::new()
+            } else {
+                vec![Box::new({
+                    let path = path.clone();
+                    move |tx: &AppEventSender| {
+                        tx.send(AppEvent::WorktreeSwitched(path.clone()));
+                        tx.send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                            cwd: Some(path.clone()),
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            model: None,
+                            effort: None,
+                            summary: None,
+                        }));
+                        tx.send(AppEvent::CodexOp(Op::ListSkills {
+                            cwds: vec![path.clone()],
+                            force_reload: true,
+                        }));
+                    }
+                })]
+            };
+
+            items.push(SelectionItem {
+                name: display,
+                description: Some(format!("branch: {branch_label}")),
+                is_current,
+                actions,
+                dismiss_on_select: true,
+                search_value: Some(search),
+                disabled_reason: entry.is_bare.then(|| "Bare repository".to_string()),
+                ..Default::default()
+            });
+        }
+
+        let subtitle = if let Some(err) = self.worktree_list_error.as_ref() {
+            Some(format!("Failed to detect worktrees: {err}"))
+        } else if self.worktree_list.is_empty() {
+            Some("No worktrees detected for this session.".to_string())
+        } else {
+            None
+        };
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Select a worktree".to_string()),
+            subtitle,
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            is_searchable: true,
+            search_placeholder: Some("Type to search worktrees".to_string()),
+            ..Default::default()
+        });
         self.request_redraw();
     }
 
@@ -3907,12 +5344,19 @@ impl ChatWidget {
     }
 
     fn on_list_mcp_tools(&mut self, ev: McpListToolsResponseEvent) {
+        let startup_durations =
+            (!self.mcp_startup_durations.is_empty()).then_some(&self.mcp_startup_durations);
         self.add_to_history(history_cell::new_mcp_tools_output(
             &self.config,
             ev.tools,
             ev.resources,
             ev.resource_templates,
             &ev.auth_statuses,
+            history_cell::McpStartupRenderInfo {
+                statuses: self.mcp_startup_status.as_ref(),
+                durations: startup_durations,
+                ready_duration: self.mcp_startup_duration,
+            },
         ));
     }
 

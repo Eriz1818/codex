@@ -398,6 +398,11 @@ async fn make_chatwidget_manual(
         rate_limit_warnings: RateLimitWarningState::default(),
         rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
         rate_limit_poller: None,
+        status_bar_git_poller: None,
+        worktree_list: Vec::new(),
+        worktree_list_error: None,
+        worktree_list_refresh_in_progress: false,
+        shared_dirs_write_notice_shown: false,
         stream_controller: None,
         running_commands: HashMap::new(),
         suppressed_exec_calls: HashSet::new(),
@@ -406,6 +411,11 @@ async fn make_chatwidget_manual(
         unified_exec_sessions: Vec::new(),
         hook_processes: Vec::new(),
         mcp_startup_status: None,
+        mcp_failed_servers: Vec::new(),
+        mcp_startup_started_at: None,
+        mcp_startup_duration: None,
+        mcp_server_start_times: HashMap::new(),
+        mcp_startup_durations: HashMap::new(),
         interrupts: InterruptManager::new(),
         reasoning_buffer: String::new(),
         full_reasoning_buffer: String::new(),
@@ -426,6 +436,69 @@ async fn make_chatwidget_manual(
         external_editor_state: ExternalEditorState::Closed,
     };
     (widget, rx, op_rx)
+}
+
+#[tokio::test]
+async fn r_retries_failed_mcp_servers_when_idle() {
+    use codex_core::protocol::McpStartupFailure;
+
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(None).await;
+
+    chat.handle_codex_event(Event {
+        id: "mcp-1".into(),
+        msg: EventMsg::McpStartupComplete(McpStartupCompleteEvent {
+            ready: Vec::new(),
+            failed: vec![McpStartupFailure {
+                server: "alpha".to_string(),
+                error: "boom".to_string(),
+            }],
+            cancelled: Vec::new(),
+        }),
+    });
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    assert!(
+        chat.bottom_pane
+            .mcp_startup_banner_message()
+            .is_some_and(|msg| msg.contains("alpha")),
+        "expected MCP startup banner to mention the failed server"
+    );
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+
+    match op_rx.try_recv() {
+        Ok(Op::McpRetry { servers }) => assert_eq!(servers, vec!["alpha".to_string()]),
+        other => panic!("expected McpRetry op, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn mcp_startup_banner_includes_timeout_hint() {
+    use codex_core::protocol::McpStartupFailure;
+
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
+
+    chat.handle_codex_event(Event {
+        id: "mcp-1".into(),
+        msg: EventMsg::McpStartupComplete(McpStartupCompleteEvent {
+            ready: Vec::new(),
+            failed: vec![McpStartupFailure {
+                server: "basic-memory".to_string(),
+                error: "MCP client for 'basic-memory' timed out after 10 seconds.".to_string(),
+            }],
+            cancelled: Vec::new(),
+        }),
+    });
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    let message = chat
+        .bottom_pane
+        .mcp_startup_banner_message()
+        .expect("banner message");
+    assert!(
+        message.contains("`/mcp timeout basic-memory 30`"),
+        "expected timeout hint; got: {message}"
+    );
 }
 
 fn set_chatgpt_auth(chat: &mut ChatWidget) {
@@ -487,6 +560,18 @@ fn make_token_info(total_tokens: i64, context_window: i64) -> TokenUsageInfo {
     }
 }
 
+fn take_persist_worktree_shared_dirs(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+) -> Vec<Vec<String>> {
+    let mut out = Vec::new();
+    while let Ok(ev) = rx.try_recv() {
+        if let AppEvent::PersistWorktreesSharedDirs { shared_dirs } = ev {
+            out.push(shared_dirs);
+        }
+    }
+    out
+}
+
 #[tokio::test]
 async fn rate_limit_warnings_emit_thresholds() {
     let mut state = RateLimitWarningState::default();
@@ -517,6 +602,45 @@ async fn rate_limit_warnings_emit_thresholds() {
         ],
         "expected one warning per limit for the highest crossed threshold"
     );
+}
+
+#[tokio::test]
+async fn worktree_shared_add_list_and_rm_update_config_and_emit_persist_event() {
+    use crossterm::event::KeyCode;
+    use crossterm::event::KeyEvent;
+    use crossterm::event::KeyModifiers;
+    use pretty_assertions::assert_eq;
+
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(None).await;
+
+    chat.bottom_pane
+        .apply_external_edit("/worktree shared add ./notes/".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_eq!(chat.config.worktrees_shared_dirs, vec!["notes".to_string()]);
+    assert!(op_rx.try_recv().is_err());
+
+    let persist = take_persist_worktree_shared_dirs(&mut rx);
+    assert_eq!(persist.last(), Some(&vec!["notes".to_string()]));
+
+    chat.bottom_pane
+        .apply_external_edit("/worktree shared list".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    let cells = drain_insert_history(&mut rx);
+    let rendered = cells
+        .last()
+        .map(|lines| lines_to_single_string(lines))
+        .unwrap_or_default();
+    assert!(rendered.contains("notes"));
+
+    // Seed a legacy/un-normalized entry and ensure `rm` removes it.
+    chat.config.worktrees_shared_dirs = vec!["./tmp/".to_string()];
+    chat.bottom_pane
+        .apply_external_edit("/worktree shared rm tmp".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(chat.config.worktrees_shared_dirs, Vec::<String>::new());
+    let persist = take_persist_worktree_shared_dirs(&mut rx);
+    assert_eq!(persist.last(), Some(&Vec::<String>::new()));
 }
 
 #[tokio::test]
