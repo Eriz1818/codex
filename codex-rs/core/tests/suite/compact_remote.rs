@@ -75,6 +75,7 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
             items: vec![UserInput::Text {
                 text: "hello remote compact".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
@@ -87,6 +88,7 @@ async fn remote_compact_replaces_history_for_followups() -> Result<()> {
             items: vec![UserInput::Text {
                 text: "after compact".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
@@ -193,6 +195,7 @@ async fn remote_compact_runs_automatically() -> Result<()> {
             items: vec![UserInput::Text {
                 text: "hello remote compact".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
     let message = wait_for_event_match(&codex, |ev| match ev {
@@ -265,6 +268,7 @@ async fn remote_compact_persists_replacement_history_in_rollout() -> Result<()> 
             items: vec![UserInput::Text {
                 text: "needs compaction".into(),
             }],
+            final_output_json_schema: None,
         })
         .await?;
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
