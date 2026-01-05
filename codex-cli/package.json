@@ -1,9 +1,9 @@
 {
-  "name": "@openai/codex",
+  "name": "@eriz1818/xcodex",
   "version": "0.0.0-dev",
   "license": "Apache-2.0",
   "bin": {
-    "codex": "bin/codex.js"
+    "xcodex": "bin/xcodex.js"
   },
   "type": "module",
   "engines": {
@@ -15,7 +15,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/openai/codex.git",
+    "url": "git+https://github.com/Eriz1818/xCodex.git",
     "directory": "codex-cli"
   }
 }
