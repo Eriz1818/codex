@@ -51,6 +51,9 @@ use codex_app_server_protocol::TurnInterruptParams;
 use codex_app_server_protocol::TurnStartParams;
 use tokio::process::Command;
 
+pub const MCP_CLIENT_NAME: &str = "codex-app-server-tests";
+pub const MCP_CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub struct McpProcess {
     next_request_id: AtomicI64,
     /// Retain this child process until the client is dropped. The Tokio runtime
@@ -141,9 +144,9 @@ impl McpProcess {
     pub async fn initialize(&mut self) -> anyhow::Result<()> {
         let params = Some(serde_json::to_value(InitializeParams {
             client_info: ClientInfo {
-                name: "codex-app-server-tests".to_string(),
+                name: MCP_CLIENT_NAME.to_string(),
                 title: None,
-                version: "0.1.0".to_string(),
+                version: MCP_CLIENT_VERSION.to_string(),
             },
         })?);
         let req_id = self.send_request("initialize", params).await?;

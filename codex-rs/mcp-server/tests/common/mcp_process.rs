@@ -136,14 +136,8 @@ impl McpProcess {
         .await?;
 
         let initialized = self.read_jsonrpc_message().await?;
-        let os_info = os_info::get();
-        let user_agent = format!(
-            "codex_cli_rs/0.0.0 ({} {}; {}) {} (elicitation test; 0.0.0)",
-            os_info.os_type(),
-            os_info.version(),
-            os_info.architecture().unwrap_or("unknown"),
-            codex_core::terminal::user_agent()
-        );
+        let base_user_agent = codex_core::default_client::get_codex_user_agent();
+        let user_agent = format!("{base_user_agent} (elicitation test; 0.0.0)");
         assert_eq!(
             JSONRPCMessage::Response(JSONRPCResponse {
                 jsonrpc: JSONRPC_VERSION.into(),
@@ -157,7 +151,7 @@ impl McpProcess {
                     "serverInfo": {
                         "name": "codex-mcp-server",
                         "title": "Codex",
-                        "version": "0.0.0",
+                        "version": env!("CARGO_PKG_VERSION"),
                         "user_agent": user_agent
                     },
                     "protocolVersion": mcp_types::MCP_SCHEMA_VERSION
