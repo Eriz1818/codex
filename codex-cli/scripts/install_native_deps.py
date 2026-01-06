@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Install xcodex native binaries (Rust CLI plus ripgrep helpers)."""
 
+from __future__ import annotations
+
 import argparse
 from contextlib import contextmanager
 import json
