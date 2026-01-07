@@ -23,7 +23,7 @@ impl ContextManager {
     pub(crate) fn new() -> Self {
         Self {
             items: Vec::new(),
-            token_info: TokenUsageInfo::new_or_append(&None, &None, None),
+            token_info: TokenUsageInfo::new_or_append(&None, &None, None, None),
         }
     }
 
@@ -35,11 +35,22 @@ impl ContextManager {
         self.token_info = info;
     }
 
-    pub(crate) fn set_token_usage_full(&mut self, context_window: i64) {
+    pub(crate) fn set_token_usage_full(
+        &mut self,
+        context_window: i64,
+        full_model_context_window: Option<i64>,
+    ) {
         match &mut self.token_info {
-            Some(info) => info.fill_to_context_window(context_window),
+            Some(info) => {
+                info.fill_to_context_window(context_window);
+                if info.full_model_context_window.is_none() {
+                    info.full_model_context_window = full_model_context_window;
+                }
+            }
             None => {
-                self.token_info = Some(TokenUsageInfo::full_context_window(context_window));
+                let mut info = TokenUsageInfo::full_context_window(context_window);
+                info.full_model_context_window = full_model_context_window.or(Some(context_window));
+                self.token_info = Some(info);
             }
         }
     }
@@ -126,11 +137,13 @@ impl ContextManager {
         &mut self,
         usage: &TokenUsage,
         model_context_window: Option<i64>,
+        full_model_context_window: Option<i64>,
     ) {
         self.token_info = TokenUsageInfo::new_or_append(
             &self.token_info,
             &Some(usage.clone()),
             model_context_window,
+            full_model_context_window,
         );
     }
 

@@ -906,6 +906,10 @@ pub struct TokenUsageInfo {
     pub last_token_usage: TokenUsage,
     #[ts(type = "number | null")]
     pub model_context_window: Option<i64>,
+    /// Full, unscaled model context window. When `model_context_window` reserves headroom,
+    /// this value retains the full window for display.
+    #[ts(type = "number | null")]
+    pub full_model_context_window: Option<i64>,
 }
 
 impl TokenUsageInfo {
@@ -913,6 +917,7 @@ impl TokenUsageInfo {
         info: &Option<TokenUsageInfo>,
         last: &Option<TokenUsage>,
         model_context_window: Option<i64>,
+        full_model_context_window: Option<i64>,
     ) -> Option<Self> {
         if info.is_none() && last.is_none() {
             return None;
@@ -924,8 +929,17 @@ impl TokenUsageInfo {
                 total_token_usage: TokenUsage::default(),
                 last_token_usage: TokenUsage::default(),
                 model_context_window,
+                full_model_context_window,
             },
         };
+
+        if info.model_context_window.is_none() {
+            info.model_context_window = model_context_window;
+        }
+        if info.full_model_context_window.is_none() {
+            info.full_model_context_window = full_model_context_window;
+        }
+
         if let Some(last) = last {
             info.append_last_usage(last);
         }
@@ -939,6 +953,7 @@ impl TokenUsageInfo {
 
     pub fn fill_to_context_window(&mut self, context_window: i64) {
         self.model_context_window = Some(context_window);
+        self.full_model_context_window = Some(context_window);
         self.last_token_usage = TokenUsage {
             total_tokens: context_window,
             ..TokenUsage::default()
@@ -950,6 +965,7 @@ impl TokenUsageInfo {
             total_token_usage: TokenUsage::default(),
             last_token_usage: TokenUsage::default(),
             model_context_window: Some(context_window),
+            full_model_context_window: Some(context_window),
         };
         info.fill_to_context_window(context_window);
         info

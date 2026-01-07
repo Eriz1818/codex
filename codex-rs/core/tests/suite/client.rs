@@ -1360,7 +1360,8 @@ async fn token_count_includes_rate_limits_snapshot() {
                     "total_tokens": 123
                 },
                 // Default model is gpt-5.1-codex-max in tests → 95% usable context window
-                "model_context_window": 258400
+                "model_context_window": 258400,
+                "full_model_context_window": 272000
             },
             "rate_limits": {
                 "primary": {

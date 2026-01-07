@@ -1556,6 +1556,7 @@ mod tests {
                 total_tokens: 23,
             },
             model_context_window: Some(4096),
+            full_model_context_window: Some(4096),
         };
         let rate_limits = RateLimitSnapshot {
             primary: Some(RateLimitWindow {

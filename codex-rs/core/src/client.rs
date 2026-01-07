@@ -103,6 +103,10 @@ impl ModelClient {
             .map(|window| window.saturating_mul(percent) / 100)
     }
 
+    pub fn get_full_model_context_window(&self) -> Option<i64> {
+        self.get_model_family().context_window
+    }
+
     pub fn config(&self) -> Arc<Config> {
         Arc::clone(&self.config)
     }
