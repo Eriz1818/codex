@@ -502,9 +502,13 @@ fn exec_options(
     .chain(
         proposed_execpolicy_amendment
             .filter(|_| features.enabled(Feature::ExecPolicy))
-            .map(|prefix| {
+            .and_then(|prefix| {
                 let rendered_prefix = strip_bash_lc_and_escape(prefix.command());
-                ApprovalOption {
+                if rendered_prefix.contains('\n') || rendered_prefix.contains('\r') {
+                    return None;
+                }
+
+                Some(ApprovalOption {
                     label: format!(
                         "Yes, and don't ask again for commands that start with `{rendered_prefix}`"
                     ),
@@ -515,7 +519,7 @@ fn exec_options(
                     ),
                     display_shortcut: None,
                     additional_shortcuts: vec![key_hint::plain(KeyCode::Char('p'))],
-                }
+                })
             }),
     )
     .chain([ApprovalOption {
@@ -536,7 +540,13 @@ fn patch_options() -> Vec<ApprovalOption> {
             additional_shortcuts: vec![key_hint::plain(KeyCode::Char('y'))],
         },
         ApprovalOption {
-            label: "No, and tell xcodex what to do differently".to_string(),
+            label: "Yes, and don't ask again for these files".to_string(),
+            decision: ApprovalDecision::Review(ReviewDecision::ApprovedForSession),
+            display_shortcut: None,
+            additional_shortcuts: vec![key_hint::plain(KeyCode::Char('a'))],
+        },
+        ApprovalOption {
+            label: "No, and tell xCodex what to do differently".to_string(),
             decision: ApprovalDecision::Review(ReviewDecision::Abort),
             display_shortcut: Some(key_hint::plain(KeyCode::Esc)),
             additional_shortcuts: vec![key_hint::plain(KeyCode::Char('n'))],

@@ -13,6 +13,7 @@ use crate::sandboxing::SandboxPermissions;
 use crate::sandboxing::execute_env;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
+use crate::tools::sandboxing::ExecApprovalRequirement;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::Sandboxable;
 use crate::tools::sandboxing::SandboxablePreference;
@@ -20,30 +21,28 @@ use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::with_cached_approval;
+use codex_apply_patch::ApplyPatchAction;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::ReviewDecision;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ApplyPatchRequest {
-    pub patch: String,
-    pub cwd: PathBuf,
+    pub action: ApplyPatchAction,
+    pub file_paths: Vec<AbsolutePathBuf>,
+    pub changes: std::collections::HashMap<PathBuf, FileChange>,
+    pub exec_approval_requirement: ExecApprovalRequirement,
     pub timeout_ms: Option<u64>,
-    pub user_explicitly_approved: bool,
     pub codex_exe: Option<PathBuf>,
 }
 
 #[derive(Default)]
 pub struct ApplyPatchRuntime;
-
-#[derive(serde::Serialize, Clone, Debug, Eq, PartialEq, Hash)]
-pub(crate) struct ApprovalKey {
-    patch: String,
-    cwd: PathBuf,
-}
 
 impl ApplyPatchRuntime {
     pub fn new() -> Self {
@@ -52,7 +51,7 @@ impl ApplyPatchRuntime {
 
     fn apply_patch_in_process(req: &ApplyPatchRequest) -> ExecToolCallOutput {
         let start = Instant::now();
-        let parsed = match codex_apply_patch::parse_patch(&req.patch) {
+        let parsed = match codex_apply_patch::parse_patch(&req.action.patch) {
             Ok(parsed) => parsed,
             Err(err) => {
                 let message = format!("apply_patch parse failed: {err}\n");
@@ -71,7 +70,7 @@ impl ApplyPatchRuntime {
         for hunk in parsed.hunks {
             match hunk {
                 codex_apply_patch::Hunk::AddFile { path, contents } => {
-                    let abs = req.cwd.join(&path);
+                    let abs = req.action.cwd.join(&path);
                     if let Some(parent) = abs.parent()
                         && !parent.as_os_str().is_empty()
                         && let Err(err) = std::fs::create_dir_all(parent)
@@ -92,7 +91,7 @@ impl ApplyPatchRuntime {
                     added.push(path);
                 }
                 codex_apply_patch::Hunk::DeleteFile { path } => {
-                    let abs = req.cwd.join(&path);
+                    let abs = req.action.cwd.join(&path);
                     if let Err(err) = std::fs::remove_file(&abs) {
                         let display = path.display();
                         return Self::error_output(
@@ -107,7 +106,7 @@ impl ApplyPatchRuntime {
                     move_path,
                     chunks,
                 } => {
-                    let abs = req.cwd.join(&path);
+                    let abs = req.action.cwd.join(&path);
                     let update = match codex_apply_patch::unified_diff_from_chunks(&abs, &chunks) {
                         Ok(update) => update,
                         Err(err) => {
@@ -118,7 +117,7 @@ impl ApplyPatchRuntime {
                         }
                     };
                     if let Some(dest) = move_path {
-                        let abs_dest = req.cwd.join(&dest);
+                        let abs_dest = req.action.cwd.join(&dest);
                         if let Some(parent) = abs_dest.parent()
                             && !parent.as_os_str().is_empty()
                             && let Err(err) = std::fs::create_dir_all(parent)
@@ -204,8 +203,8 @@ impl ApplyPatchRuntime {
         let program = exe.to_string_lossy().to_string();
         Ok(CommandSpec {
             program,
-            args: vec![CODEX_APPLY_PATCH_ARG1.to_string(), req.patch.clone()],
-            cwd: req.cwd.clone(),
+            args: vec![CODEX_APPLY_PATCH_ARG1.to_string(), req.action.patch.clone()],
+            cwd: req.action.cwd.clone(),
             expiration: req.timeout_ms.into(),
             // Run apply_patch with a minimal environment for determinism and to avoid leaks.
             env: HashMap::new(),
@@ -233,13 +232,10 @@ impl Sandboxable for ApplyPatchRuntime {
 }
 
 impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
-    type ApprovalKey = ApprovalKey;
+    type ApprovalKey = AbsolutePathBuf;
 
-    fn approval_key(&self, req: &ApplyPatchRequest) -> Self::ApprovalKey {
-        ApprovalKey {
-            patch: req.patch.clone(),
-            cwd: req.cwd.clone(),
-        }
+    fn approval_keys(&self, req: &ApplyPatchRequest) -> Vec<Self::ApprovalKey> {
+        req.file_paths.clone()
     }
 
     fn start_approval_async<'a>(
@@ -247,31 +243,25 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
         req: &'a ApplyPatchRequest,
         ctx: ApprovalCtx<'a>,
     ) -> BoxFuture<'a, ReviewDecision> {
-        let key = self.approval_key(req);
         let session = ctx.session;
         let turn = ctx.turn;
         let call_id = ctx.call_id.to_string();
-        let cwd = req.cwd.clone();
         let retry_reason = ctx.retry_reason.clone();
-        let user_explicitly_approved = req.user_explicitly_approved;
+        let approval_keys = self.approval_keys(req);
+        let changes = req.changes.clone();
         Box::pin(async move {
-            with_cached_approval(&session.services, key, move || async move {
-                if let Some(reason) = retry_reason {
-                    session
-                        .request_command_approval(
-                            turn,
-                            call_id,
-                            vec!["apply_patch".to_string()],
-                            cwd,
-                            Some(reason),
-                            None,
-                        )
-                        .await
-                } else if user_explicitly_approved {
-                    ReviewDecision::ApprovedForSession
-                } else {
-                    ReviewDecision::Approved
-                }
+            if let Some(reason) = retry_reason {
+                let rx_approve = session
+                    .request_patch_approval(turn, call_id, changes.clone(), Some(reason), None)
+                    .await;
+                return rx_approve.await.unwrap_or_default();
+            }
+
+            with_cached_approval(&session.services, approval_keys, || async move {
+                let rx_approve = session
+                    .request_patch_approval(turn, call_id, changes, None, None)
+                    .await;
+                rx_approve.await.unwrap_or_default()
             })
             .await
         })
@@ -279,6 +269,17 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
 
     fn wants_no_sandbox_approval(&self, policy: AskForApproval) -> bool {
         !matches!(policy, AskForApproval::Never)
+    }
+
+    // apply_patch approvals are decided upstream by assess_patch_safety.
+    //
+    // This override ensures the orchestrator runs the patch approval flow when required instead
+    // of falling back to the global exec approval policy.
+    fn exec_approval_requirement(
+        &self,
+        req: &ApplyPatchRequest,
+    ) -> Option<ExecApprovalRequirement> {
+        Some(req.exec_approval_requirement.clone())
     }
 }
 
@@ -311,20 +312,35 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
+    use codex_apply_patch::MaybeApplyPatchVerified;
     use pretty_assertions::assert_eq;
     use std::fs;
     use tempfile::tempdir;
 
+    fn make_test_request(dir: &tempfile::TempDir, patch: &str) -> ApplyPatchRequest {
+        let argv = vec!["apply_patch".to_string(), patch.to_string()];
+        let action = match codex_apply_patch::maybe_parse_apply_patch_verified(&argv, dir.path()) {
+            MaybeApplyPatchVerified::Body(action) => action,
+            other => panic!("expected Body apply_patch action, got {other:?}"),
+        };
+
+        ApplyPatchRequest {
+            action,
+            file_paths: Vec::new(),
+            changes: HashMap::new(),
+            exec_approval_requirement: ExecApprovalRequirement::Skip {
+                bypass_sandbox: false,
+                proposed_execpolicy_amendment: None,
+            },
+            timeout_ms: None,
+            codex_exe: None,
+        }
+    }
+
     #[test]
     fn apply_patch_in_process_rejects_empty_patch() {
         let dir = tempdir().expect("tempdir");
-        let req = ApplyPatchRequest {
-            patch: "*** Begin Patch\n*** End Patch".to_string(),
-            cwd: dir.path().to_path_buf(),
-            timeout_ms: None,
-            user_explicitly_approved: true,
-            codex_exe: None,
-        };
+        let req = make_test_request(&dir, "*** Begin Patch\n*** End Patch");
 
         let out = ApplyPatchRuntime::apply_patch_in_process(&req);
 
@@ -336,14 +352,10 @@ mod tests {
     #[test]
     fn apply_patch_in_process_avoids_absolute_paths_in_errors() {
         let dir = tempdir().expect("tempdir");
-        let req = ApplyPatchRequest {
-            patch: "*** Begin Patch\n*** Update File: missing.txt\n@@\n-old\n+new\n*** End Patch"
-                .to_string(),
-            cwd: dir.path().to_path_buf(),
-            timeout_ms: None,
-            user_explicitly_approved: true,
-            codex_exe: None,
-        };
+        let req = make_test_request(
+            &dir,
+            "*** Begin Patch\n*** Update File: missing.txt\n@@\n-old\n+new\n*** End Patch",
+        );
 
         let out = ApplyPatchRuntime::apply_patch_in_process(&req);
 
@@ -365,14 +377,10 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let path = dir.path().join("update.txt");
         fs::write(&path, "foo\nbar\n").expect("seed file");
-        let req = ApplyPatchRequest {
-            patch: "*** Begin Patch\n*** Update File: update.txt\n@@\n-bar\n+baz\n*** End Patch"
-                .to_string(),
-            cwd: dir.path().to_path_buf(),
-            timeout_ms: None,
-            user_explicitly_approved: true,
-            codex_exe: None,
-        };
+        let req = make_test_request(
+            &dir,
+            "*** Begin Patch\n*** Update File: update.txt\n@@\n-bar\n+baz\n*** End Patch",
+        );
 
         let out = ApplyPatchRuntime::apply_patch_in_process(&req);
 

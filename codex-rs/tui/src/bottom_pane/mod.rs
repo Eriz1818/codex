@@ -517,11 +517,23 @@ impl BottomPane {
         self.request_redraw();
     }
 
-    pub(crate) fn set_background_activity(&mut self, sessions: Vec<String>, hooks: Vec<String>) {
+    pub(crate) fn set_unified_exec_activity(&mut self, processes: Vec<String>, hooks: Vec<String>) {
         let mut updated = false;
-        updated |= self.unified_exec_footer.set_sessions(sessions);
+        updated |= self.unified_exec_footer.set_processes(processes);
         updated |= self.unified_exec_footer.set_hooks(hooks);
         if updated {
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn set_unified_exec_processes(&mut self, processes: Vec<String>) {
+        if self.unified_exec_footer.set_processes(processes) {
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn set_unified_exec_hooks(&mut self, hooks: Vec<String>) {
+        if self.unified_exec_footer.set_hooks(hooks) {
             self.request_redraw();
         }
     }

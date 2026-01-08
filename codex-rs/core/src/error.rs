@@ -8,7 +8,7 @@ use chrono::Datelike;
 use chrono::Local;
 use chrono::Utc;
 use codex_async_utils::CancelErr;
-use codex_protocol::ConversationId;
+use codex_protocol::ThreadId;
 use codex_protocol::protocol::CodexErrorInfo;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::RateLimitSnapshot;
@@ -71,17 +71,17 @@ pub enum CodexErr {
     Stream(String, Option<Duration>),
 
     #[error(
-        "Codex estimates the next request will exceed the model's context window. Try `/compact` to summarize history or enable `/autocompact` to do it automatically. Otherwise start a new conversation or clear earlier history before retrying."
+        "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying."
     )]
     ContextWindowExceeded,
+
+    #[error("no thread with id: {0}")]
+    ThreadNotFound(ThreadId),
 
     #[error(
         "The provider rejected this request because it exceeded the model's context window: {0}. Try `/compact` to summarize history or enable `/autocompact` to do it automatically."
     )]
     ProviderContextWindowExceeded(String),
-
-    #[error("no conversation with id: {0}")]
-    ConversationNotFound(ConversationId),
 
     #[error("session configured event was not the first event in the stream")]
     SessionConfiguredNotFirstEvent,
@@ -183,6 +183,44 @@ pub enum CodexErr {
 impl From<CancelErr> for CodexErr {
     fn from(_: CancelErr) -> Self {
         CodexErr::TurnAborted
+    }
+}
+
+impl CodexErr {
+    pub fn is_retryable(&self) -> bool {
+        match self {
+            CodexErr::TurnAborted
+            | CodexErr::Interrupted
+            | CodexErr::EnvVar(_)
+            | CodexErr::Fatal(_)
+            | CodexErr::UsageNotIncluded
+            | CodexErr::QuotaExceeded
+            | CodexErr::InvalidImageRequest()
+            | CodexErr::InvalidRequest(_)
+            | CodexErr::RefreshTokenFailed(_)
+            | CodexErr::UnsupportedOperation(_)
+            | CodexErr::Sandbox(_)
+            | CodexErr::LandlockSandboxExecutableNotProvided
+            | CodexErr::RetryLimit(_)
+            | CodexErr::ContextWindowExceeded
+            | CodexErr::ProviderContextWindowExceeded(_)
+            | CodexErr::ThreadNotFound(_)
+            | CodexErr::Spawn
+            | CodexErr::SessionConfiguredNotFirstEvent
+            | CodexErr::UsageLimitReached(_) => false,
+            CodexErr::Stream(..)
+            | CodexErr::Timeout
+            | CodexErr::UnexpectedStatus(_)
+            | CodexErr::ResponseStreamFailed(_)
+            | CodexErr::ConnectionFailed(_)
+            | CodexErr::InternalServerError
+            | CodexErr::InternalAgentDied
+            | CodexErr::Io(_)
+            | CodexErr::Json(_)
+            | CodexErr::TokioJoin(_) => true,
+            #[cfg(target_os = "linux")]
+            CodexErr::LandlockRuleset(_) | CodexErr::LandlockPathFd(_) => false,
+        }
     }
 }
 
@@ -462,7 +500,7 @@ impl CodexErr {
             CodexErr::SessionConfiguredNotFirstEvent
             | CodexErr::InternalServerError
             | CodexErr::InternalAgentDied => CodexErrorInfo::InternalServerError,
-            CodexErr::UnsupportedOperation(_) | CodexErr::ConversationNotFound(_) => {
+            CodexErr::UnsupportedOperation(_) | CodexErr::ThreadNotFound(_) => {
                 CodexErrorInfo::BadRequest
             }
             CodexErr::Sandbox(_) => CodexErrorInfo::SandboxError,

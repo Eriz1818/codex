@@ -8,23 +8,23 @@ use crate::live_wrap::take_prefix_by_width;
 use crate::render::renderable::Renderable;
 
 pub(crate) struct UnifiedExecFooter {
-    sessions: Vec<String>,
     hooks: Vec<String>,
+    processes: Vec<String>,
 }
 
 impl UnifiedExecFooter {
     pub(crate) fn new() -> Self {
         Self {
-            sessions: Vec::new(),
             hooks: Vec::new(),
+            processes: Vec::new(),
         }
     }
 
-    pub(crate) fn set_sessions(&mut self, sessions: Vec<String>) -> bool {
-        if self.sessions == sessions {
+    pub(crate) fn set_processes(&mut self, processes: Vec<String>) -> bool {
+        if self.processes == processes {
             return false;
         }
-        self.sessions = sessions;
+        self.processes = processes;
         true
     }
 
@@ -37,28 +37,31 @@ impl UnifiedExecFooter {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.sessions.is_empty() && self.hooks.is_empty()
+        self.processes.is_empty() && self.hooks.is_empty()
     }
 
     fn render_lines(&self, width: u16) -> Vec<Line<'static>> {
-        if (self.sessions.is_empty() && self.hooks.is_empty()) || width < 4 {
+        if (self.processes.is_empty() && self.hooks.is_empty()) || width < 4 {
             return Vec::new();
         }
 
         let mut parts = Vec::new();
-        let terminal_count = self.sessions.len();
-        if terminal_count > 0 {
-            let plural = if terminal_count == 1 { "" } else { "s" };
-            parts.push(format!(
-                "{terminal_count} background terminal{plural} running"
-            ));
+        let count = self.processes.len();
+        if count > 0 {
+            let plural = if count == 1 { "" } else { "s" };
+            parts.push(format!("{count} background terminal{plural} running"));
         }
         let hook_count = self.hooks.len();
         if hook_count > 0 {
             let plural = if hook_count == 1 { "" } else { "s" };
             parts.push(format!("{hook_count} hook{plural} running"));
         }
-        parts.push(String::from("/ps to view"));
+        if count > 0 {
+            parts.push(String::from("/ps to view"));
+        }
+        if hook_count > 0 {
+            parts.push(String::from("/hooks to view"));
+        }
 
         let message = format!("  {}", parts.join(" · "));
         let (truncated, _, _) = take_prefix_by_width(&message, width as usize);
@@ -95,7 +98,7 @@ mod tests {
     #[test]
     fn render_more_sessions() {
         let mut footer = UnifiedExecFooter::new();
-        footer.set_sessions(vec!["rg \"foo\" src".to_string()]);
+        footer.set_processes(vec!["rg \"foo\" src".to_string()]);
         let width = 50;
         let height = footer.desired_height(width);
         let mut buf = Buffer::empty(Rect::new(0, 0, width, height));
@@ -106,7 +109,7 @@ mod tests {
     #[test]
     fn render_many_sessions() {
         let mut footer = UnifiedExecFooter::new();
-        footer.set_sessions((0..123).map(|idx| format!("cmd {idx}")).collect());
+        footer.set_processes((0..123).map(|idx| format!("cmd {idx}")).collect());
         let width = 50;
         let height = footer.desired_height(width);
         let mut buf = Buffer::empty(Rect::new(0, 0, width, height));

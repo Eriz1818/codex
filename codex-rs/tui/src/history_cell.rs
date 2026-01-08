@@ -540,18 +540,18 @@ impl BackgroundActivityEntry {
 }
 
 #[derive(Debug)]
-struct UnifiedExecSessionsCell {
-    sessions: Vec<BackgroundActivityEntry>,
+struct UnifiedExecProcessesCell {
+    processes: Vec<BackgroundActivityEntry>,
     hooks: Vec<BackgroundActivityEntry>,
 }
 
-impl UnifiedExecSessionsCell {
-    fn new(sessions: Vec<BackgroundActivityEntry>, hooks: Vec<BackgroundActivityEntry>) -> Self {
-        Self { sessions, hooks }
+impl UnifiedExecProcessesCell {
+    fn new(processes: Vec<BackgroundActivityEntry>, hooks: Vec<BackgroundActivityEntry>) -> Self {
+        Self { processes, hooks }
     }
 }
 
-impl HistoryCell for UnifiedExecSessionsCell {
+impl HistoryCell for UnifiedExecProcessesCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         if width == 0 {
             return Vec::new();
@@ -560,10 +560,10 @@ impl HistoryCell for UnifiedExecSessionsCell {
         let wrap_width = width as usize;
         let max_entries = 16usize;
         let mut out: Vec<Line<'static>> = Vec::new();
-        out.push(vec![format!("Background terminals ({})", self.sessions.len()).bold()].into());
+        out.push(vec![format!("Background terminals ({})", self.processes.len()).bold()].into());
         out.push("".into());
 
-        if self.sessions.is_empty() {
+        if self.processes.is_empty() {
             out.push("  • No background terminals running.".italic().into());
         }
 
@@ -572,7 +572,7 @@ impl HistoryCell for UnifiedExecSessionsCell {
         let truncation_suffix = " [...]";
         let truncation_suffix_width = UnicodeWidthStr::width(truncation_suffix);
         let mut shown = 0usize;
-        for entry in &self.sessions {
+        for entry in &self.processes {
             if shown >= max_entries {
                 break;
             }
@@ -642,7 +642,7 @@ impl HistoryCell for UnifiedExecSessionsCell {
             shown += 1;
         }
 
-        let remaining = self.sessions.len().saturating_sub(shown);
+        let remaining = self.processes.len().saturating_sub(shown);
         if remaining > 0 {
             let more_text = format!("... and {remaining} more running");
             if wrap_width <= prefix_width {
@@ -755,11 +755,18 @@ impl HistoryCell for UnifiedExecSessionsCell {
 }
 
 pub(crate) fn new_unified_exec_sessions_output(
-    sessions: Vec<BackgroundActivityEntry>,
+    processes: Vec<BackgroundActivityEntry>,
+    hooks: Vec<BackgroundActivityEntry>,
+) -> CompositeHistoryCell {
+    new_unified_exec_processes_output(processes, hooks)
+}
+
+pub(crate) fn new_unified_exec_processes_output(
+    processes: Vec<BackgroundActivityEntry>,
     hooks: Vec<BackgroundActivityEntry>,
 ) -> CompositeHistoryCell {
     let command = PlainHistoryCell::new(vec!["/ps".magenta().into()]);
-    let summary = UnifiedExecSessionsCell::new(sessions, hooks);
+    let summary = UnifiedExecProcessesCell::new(processes, hooks);
     CompositeHistoryCell::new(vec![Box::new(command), Box::new(summary)])
 }
 
@@ -2088,14 +2095,14 @@ mod tests {
 
     #[test]
     fn ps_output_empty_snapshot() {
-        let cell = new_unified_exec_sessions_output(Vec::new(), Vec::new());
+        let cell = new_unified_exec_processes_output(Vec::new(), Vec::new());
         let rendered = render_lines(&cell.display_lines(60)).join("\n");
         insta::assert_snapshot!(rendered);
     }
 
     #[test]
     fn ps_output_multiline_snapshot() {
-        let cell = new_unified_exec_sessions_output(
+        let cell = new_unified_exec_processes_output(
             vec![
                 BackgroundActivityEntry::new(
                     "proc-1".to_string(),
@@ -2111,7 +2118,7 @@ mod tests {
 
     #[test]
     fn ps_output_long_command_snapshot() {
-        let cell = new_unified_exec_sessions_output(
+        let cell = new_unified_exec_processes_output(
             vec![BackgroundActivityEntry::new(
                 "proc-1".to_string(),
                 String::from(
@@ -2126,7 +2133,7 @@ mod tests {
 
     #[test]
     fn ps_output_many_sessions_snapshot() {
-        let cell = new_unified_exec_sessions_output(
+        let cell = new_unified_exec_processes_output(
             (0..20)
                 .map(|idx| {
                     BackgroundActivityEntry::new(format!("proc-{idx}"), format!("command {idx}"))

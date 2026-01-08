@@ -1689,7 +1689,7 @@ async fn unified_exec_closes_long_running_session_at_turn_end() -> Result<()> {
     codex
         .submit(Op::UserTurn {
             items: vec![UserInput::Text {
-                text: "close unified exec sessions on turn end".into(),
+                text: "close unified exec processes on turn end".into(),
             }],
             final_output_json_schema: None,
             cwd: cwd.path().to_path_buf(),
@@ -1710,7 +1710,7 @@ async fn unified_exec_closes_long_running_session_at_turn_end() -> Result<()> {
     let begin_process_id = begin_event
         .process_id
         .clone()
-        .expect("expected process_id for long-running unified exec session");
+        .expect("expected process_id for long-running unified exec process");
 
     let pid = wait_for_pid_file(&pid_path).await?;
     assert!(
@@ -2429,6 +2429,260 @@ async fn unified_exec_runs_on_all_platforms() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn unified_exec_prunes_exited_processes_first() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
+    skip_if_windows!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config.use_experimental_unified_exec_tool = true;
+        config.features.enable(Feature::UnifiedExec);
+    });
+    let TestCodex {
+        codex,
+        cwd,
+        session_configured,
+        ..
+    } = builder.build(&server).await?;
+
+    const MAX_PROCESSES_FOR_TEST: i32 = 64;
+    const FILLER_PROCESSES: i32 = MAX_PROCESSES_FOR_TEST - 1;
+
+    let keep_call_id = "uexec-prune-keep";
+    let keep_args = serde_json::json!({
+        "cmd": "/bin/cat",
+        "yield_time_ms": 250,
+    });
+
+    let prune_call_id = "uexec-prune-target";
+    // Give the sleeper time to exit before the filler processes trigger pruning.
+    let prune_args = serde_json::json!({
+        "cmd": "sleep 1",
+        "yield_time_ms": 250,
+    });
+
+    let mut events = vec![ev_response_created("resp-prune-1")];
+    events.push(ev_function_call(
+        keep_call_id,
+        "exec_command",
+        &serde_json::to_string(&keep_args)?,
+    ));
+    events.push(ev_function_call(
+        prune_call_id,
+        "exec_command",
+        &serde_json::to_string(&prune_args)?,
+    ));
+
+    for idx in 0..FILLER_PROCESSES {
+        let filler_args = serde_json::json!({
+            "cmd": "sleep 0.5",
+            "yield_time_ms": 250,
+        });
+        let call_id = format!("uexec-prune-fill-{idx}");
+        events.push(ev_function_call(
+            &call_id,
+            "exec_command",
+            &serde_json::to_string(&filler_args)?,
+        ));
+    }
+
+    let keep_write_call_id = "uexec-prune-keep-write";
+    let probe_call_id = "uexec-prune-probe";
+
+    events.push(ev_completed("resp-prune-1"));
+    let first_response = sse(events);
+
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use wiremock::Mock;
+    use wiremock::Respond;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path_regex;
+
+    struct PruneResponder {
+        call_num: AtomicUsize,
+        first_response: String,
+        keep_call_id: &'static str,
+        prune_call_id: &'static str,
+        keep_write_call_id: &'static str,
+        probe_call_id: &'static str,
+    }
+
+    impl Respond for PruneResponder {
+        fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+            let call_num = self.call_num.fetch_add(1, Ordering::SeqCst);
+            match call_num {
+                0 => ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(self.first_response.clone()),
+                1 => {
+                    let body: Value = request.body_json().expect("request body should be JSON");
+                    let items = body["input"]
+                        .as_array()
+                        .expect("input array should be present in request body");
+
+                    let extract_process_id = |call_id: &str| -> i64 {
+                        let item = items
+                            .iter()
+                            .find(|item| {
+                                item.get("type").and_then(Value::as_str)
+                                    == Some("function_call_output")
+                                    && item.get("call_id").and_then(Value::as_str) == Some(call_id)
+                            })
+                            .unwrap_or_else(|| {
+                                panic!("missing function_call_output for {call_id} in request body")
+                            });
+                        let output = extract_output_text(item).unwrap_or_else(|| {
+                            panic!("missing output for {call_id} in request body")
+                        });
+                        let parsed = parse_unified_exec_output(output)
+                            .expect("unified exec tool output should be parseable");
+                        parsed
+                            .process_id
+                            .expect("unified exec tool output should include a process id")
+                            .parse::<i64>()
+                            .expect("unified exec tool process id should be an integer")
+                    };
+
+                    let keep_process_id = extract_process_id(self.keep_call_id);
+                    let prune_process_id = extract_process_id(self.prune_call_id);
+
+                    let keep_write_args = serde_json::json!({
+                        "chars": "still alive\n",
+                        "session_id": keep_process_id,
+                        "yield_time_ms": 500,
+                    });
+                    let probe_args = serde_json::json!({
+                        "chars": "should fail\n",
+                        "session_id": prune_process_id,
+                        "yield_time_ms": 500,
+                    });
+
+                    let second_response = sse(vec![
+                        ev_response_created("resp-prune-2"),
+                        ev_function_call(
+                            self.keep_write_call_id,
+                            "write_stdin",
+                            &serde_json::to_string(&keep_write_args)
+                                .expect("keep write args should serialize"),
+                        ),
+                        ev_function_call(
+                            self.probe_call_id,
+                            "write_stdin",
+                            &serde_json::to_string(&probe_args)
+                                .expect("probe args should serialize"),
+                        ),
+                        ev_completed("resp-prune-2"),
+                    ]);
+                    ResponseTemplate::new(200)
+                        .insert_header("content-type", "text/event-stream")
+                        .set_body_string(second_response)
+                }
+                2 => ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse(vec![
+                        ev_response_created("resp-prune-3"),
+                        ev_assistant_message("msg-prune", "done"),
+                        ev_completed("resp-prune-3"),
+                    ])),
+                _ => panic!("no response for {call_num}"),
+            }
+        }
+    }
+
+    Mock::given(method("POST"))
+        .and(path_regex(".*/responses$"))
+        .respond_with(PruneResponder {
+            call_num: AtomicUsize::new(0),
+            first_response,
+            keep_call_id,
+            prune_call_id,
+            keep_write_call_id,
+            probe_call_id,
+        })
+        .expect(3)
+        .mount(&server)
+        .await;
+
+    let session_model = session_configured.model.clone();
+
+    codex
+        .submit(Op::UserTurn {
+            items: vec![UserInput::Text {
+                text: "fill process cache".into(),
+            }],
+            final_output_json_schema: None,
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            model: session_model,
+            effort: None,
+            summary: ReasoningSummary::Auto,
+        })
+        .await?;
+
+    wait_for_event(&codex, |event| matches!(event, EventMsg::TaskComplete(_))).await;
+
+    let bodies = get_responses_request_bodies(&server).await;
+
+    let find_output = |call_id: &str| -> Option<String> {
+        bodies.iter().find_map(|body| {
+            body.get("input")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items.iter().find_map(|item| {
+                        if item.get("type").and_then(Value::as_str) != Some("function_call_output")
+                        {
+                            return None;
+                        }
+                        if item.get("call_id").and_then(Value::as_str) != Some(call_id) {
+                            return None;
+                        }
+                        extract_output_text(item).map(str::to_string)
+                    })
+                })
+        })
+    };
+
+    let keep_start = find_output(keep_call_id).expect("missing initial keep process output");
+    let keep_start_output = parse_unified_exec_output(&keep_start)?;
+    let keep_process_id = keep_start_output
+        .process_id
+        .clone()
+        .expect("keep exec should return a process id");
+    assert!(keep_start_output.exit_code.is_none());
+
+    let prune_start = find_output(prune_call_id).expect("missing initial prune process output");
+    let prune_start_output = parse_unified_exec_output(&prune_start)?;
+    let prune_process_id = prune_start_output
+        .process_id
+        .clone()
+        .expect("prune exec should return a process id");
+    assert_ne!(keep_process_id, prune_process_id);
+    assert!(prune_start_output.exit_code.is_none());
+
+    let keep_write = find_output(keep_write_call_id).expect("missing keep write output");
+    let keep_write_output = parse_unified_exec_output(&keep_write)?;
+    assert!(keep_write_output.process_id.is_some());
+    assert!(
+        keep_write_output.output.contains("still alive"),
+        "expected cat process to echo input, got {:?}",
+        keep_write_output.output
+    );
+
+    let pruned_probe = find_output(probe_call_id).expect("missing probe output");
+    assert!(
+        pruned_probe.contains("UnknownProcessId") || pruned_probe.contains("Unknown process id"),
+        "expected probe to fail after pruning, got {pruned_probe:?}"
+    );
+
+    Ok(())
+}
 fn assert_command(command: &[String], expected_args: &str, expected_cmd: &str) {
     assert_eq!(command.len(), 3);
     let shell_path = &command[0];
