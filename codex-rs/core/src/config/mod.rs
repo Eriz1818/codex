@@ -1132,6 +1132,33 @@ pub struct HooksConfig {
     #[serde(default)]
     pub tool_call_finished: Vec<Vec<String>>,
 
+    /// Enable the in-process (Rust) hook that appends compact `tool_call_finished`
+    /// summaries to `CODEX_HOME/hooks-tool-calls.log`.
+    #[serde(default)]
+    pub inproc_tool_call_summary: bool,
+
+    /// Enable built-in in-process (Rust) hooks by name.
+    ///
+    /// This is additive with `hooks.inproc_tool_call_summary` for backward
+    /// compatibility.
+    ///
+    /// Example:
+    ///
+    /// ```toml
+    /// [hooks]
+    /// inproc = ["tool_call_summary"]
+    /// ```
+    #[serde(default)]
+    pub inproc: Vec<String>,
+
+    /// Long-lived external hook host (optional).
+    ///
+    /// This is a separate provider from the per-event external hooks configured
+    /// above. When enabled, Codex spawns a single process and streams hook
+    /// events to it over stdin as newline-delimited JSON (JSONL).
+    #[serde(default)]
+    pub host: HookHostConfig,
+
     /// Maximum payload size (in bytes) to send directly via stdin.
     ///
     /// When the serialized payload exceeds this threshold, Codex writes it to a
@@ -1143,6 +1170,33 @@ pub struct HooksConfig {
     /// Keep only the most recent N payload/log files (global) under CODEX_HOME.
     #[serde(default = "HooksConfig::default_keep_last_n_payloads")]
     pub keep_last_n_payloads: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct HookHostConfig {
+    /// Enable the hook host.
+    ///
+    /// Disabled by default. When enabled, `command` must be non-empty.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Command to start the host process.
+    ///
+    /// Example:
+    ///
+    /// ```toml
+    /// [hooks.host]
+    /// enabled = true
+    /// command = ["python3", "-u", "$CODEX_HOME/hooks/host/python/host.py"]
+    /// ```
+    #[serde(default)]
+    pub command: Vec<String>,
+
+    /// Optional sandbox override for the host process.
+    ///
+    /// When unset, the host inherits the session sandbox policy.
+    #[serde(default)]
+    pub sandbox_mode: Option<SandboxMode>,
 }
 
 impl HooksConfig {
@@ -1166,6 +1220,9 @@ impl Default for HooksConfig {
             model_response_completed: Vec::new(),
             tool_call_started: Vec::new(),
             tool_call_finished: Vec::new(),
+            inproc_tool_call_summary: false,
+            inproc: Vec::new(),
+            host: HookHostConfig::default(),
             max_stdin_payload_bytes: Self::default_max_stdin_payload_bytes(),
             keep_last_n_payloads: Self::default_keep_last_n_payloads(),
         }

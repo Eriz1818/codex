@@ -8,6 +8,8 @@ use anyhow::anyhow;
 use codex_core::config::Constrained;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::EventMsg;
+use codex_core::protocol::HookProcessBeginEvent;
+use codex_core::protocol::HookProcessEndEvent;
 use codex_core::protocol::Op;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::user_input::UserInput;
@@ -397,5 +399,80 @@ async fn hooks_session_end_invoked() -> Result<()> {
     assert_eq!(payload["type"], json!("session-end"));
     assert_eq!(payload["session-source"], json!("exec"));
 
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hooks_tool_call_finished_emits_hook_process_events() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let call_id = "hooks-tool-call-hook-process";
+    let args = json!({
+        "command": ["/bin/sh", "-c", "echo hook-test"],
+        "timeout_ms": 1_000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "shell", &serde_json::to_string(&args)?),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("m1", "Done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    mount_sse_sequence(&server, responses).await;
+
+    let hook_dir = TempDir::new()?;
+    let hook_script = write_hook_script(&hook_dir, "hook.sh", "tool_finished.json")?;
+    let hook_script_for_assert = hook_script.clone();
+    let hook_file = hook_dir.path().join("tool_finished.json");
+
+    let TestCodex { codex, .. } = test_codex()
+        .with_config(move |cfg| {
+            cfg.hooks.tool_call_finished = vec![vec![hook_script]];
+            cfg.approval_policy = Constrained::allow_any(AskForApproval::Never);
+        })
+        .build(&server)
+        .await?;
+
+    codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "run a shell command".into(),
+            }],
+            final_output_json_schema: None,
+        })
+        .await?;
+
+    let EventMsg::HookProcessBegin(HookProcessBeginEvent {
+        hook_id,
+        event_type,
+        command,
+        ..
+    }) = wait_for_event(&codex, |ev| matches!(ev, EventMsg::HookProcessBegin(_))).await
+    else {
+        unreachable!("wait_for_event filters for HookProcessBegin")
+    };
+
+    assert_eq!(event_type, "tool-call-finished");
+    assert_eq!(command, vec![hook_script_for_assert]);
+
+    let EventMsg::HookProcessEnd(HookProcessEndEvent {
+        hook_id: finished_id,
+        exit_code,
+    }) = wait_for_event(&codex, |ev| matches!(ev, EventMsg::HookProcessEnd(_))).await
+    else {
+        unreachable!("wait_for_event filters for HookProcessEnd")
+    };
+
+    assert_eq!(finished_id, hook_id);
+    assert_eq!(exit_code, Some(0));
+
+    fs_wait::wait_for_path_exists(&hook_file, Duration::from_secs(5)).await?;
     Ok(())
 }

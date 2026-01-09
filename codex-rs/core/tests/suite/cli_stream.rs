@@ -2,6 +2,12 @@ use assert_cmd::Command as AssertCommand;
 use codex_core::RolloutRecorder;
 use codex_core::protocol::GitInfo;
 use core_test_support::fs_wait;
+use core_test_support::responses::ev_assistant_message;
+use core_test_support::responses::ev_completed;
+use core_test_support::responses::ev_function_call;
+use core_test_support::responses::ev_response_created;
+use core_test_support::responses::mount_sse_sequence;
+use core_test_support::responses::sse;
 use core_test_support::skip_if_no_network;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -164,6 +170,307 @@ async fn exec_cli_applies_experimental_instructions_file() {
     assert!(
         instructions.contains(marker),
         "instructions did not contain custom marker; got: {instructions}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_cli_inproc_hook_logs_tool_call_finished() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+
+    let call_id = "hooks-tool-call";
+    let args = serde_json::json!({
+        "command": ["/bin/sh", "-c", "echo hook-test"],
+        "timeout_ms": 1_000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "shell", &serde_json::to_string(&args).unwrap()),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("m1", "Done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    mount_sse_sequence(&server, responses).await;
+
+    let provider_override = format!(
+        "model_providers.mock={{ name = \"mock\", base_url = \"{}/v1\", env_key = \"PATH\", wire_api = \"responses\" }}",
+        server.uri()
+    );
+
+    let home = TempDir::new().unwrap();
+    let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+    let mut cmd = AssertCommand::new(bin);
+    cmd.arg("exec")
+        .arg("--skip-git-repo-check")
+        .arg("-c")
+        .arg(&provider_override)
+        .arg("-c")
+        .arg("model_provider=\"mock\"")
+        .arg("-c")
+        .arg("hooks.inproc_tool_call_summary=true")
+        .arg("-C")
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .arg("hello?\n");
+    cmd.env("CODEX_HOME", home.path())
+        .env("OPENAI_API_KEY", "dummy")
+        .env("OPENAI_BASE_URL", format!("{}/v1", server.uri()));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    let log_path = home.path().join("hooks-tool-calls.log");
+    let contents = std::fs::read_to_string(&log_path)
+        .unwrap_or_else(|err| panic!("failed to read {path}: {err}", path = log_path.display()));
+    assert!(
+        contents.contains("type=tool-call-finished tool=shell status=completed"),
+        "unexpected log contents: {contents:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_cli_inproc_hook_event_log_jsonl_logs_tool_call_finished() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+
+    let call_id = "hooks-tool-call";
+    let args = serde_json::json!({
+        "command": ["/bin/sh", "-c", "echo hook-test"],
+        "timeout_ms": 1_000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "shell", &serde_json::to_string(&args).unwrap()),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("m1", "Done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    mount_sse_sequence(&server, responses).await;
+
+    let provider_override = format!(
+        "model_providers.mock={{ name = \"mock\", base_url = \"{}/v1\", env_key = \"PATH\", wire_api = \"responses\" }}",
+        server.uri()
+    );
+
+    let home = TempDir::new().unwrap();
+    let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+    let mut cmd = AssertCommand::new(bin);
+    cmd.arg("exec")
+        .arg("--skip-git-repo-check")
+        .arg("-c")
+        .arg(&provider_override)
+        .arg("-c")
+        .arg("model_provider=\"mock\"")
+        .arg("-c")
+        .arg("hooks.inproc=[\"event_log_jsonl\"]")
+        .arg("-C")
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .arg("hello?\n");
+    cmd.env("CODEX_HOME", home.path())
+        .env("OPENAI_API_KEY", "dummy")
+        .env("OPENAI_BASE_URL", format!("{}/v1", server.uri()));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    let log_path = home.path().join("hooks.jsonl");
+    let contents = std::fs::read_to_string(&log_path)
+        .unwrap_or_else(|err| panic!("failed to read {path}: {err}", path = log_path.display()));
+    assert!(
+        contents
+            .lines()
+            .any(|line| line.contains(r#""type":"tool-call-finished""#)),
+        "unexpected log contents: {contents:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_cli_no_hooks_disables_inproc_hooks() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+
+    let call_id = "hooks-tool-call";
+    let args = serde_json::json!({
+        "command": ["/bin/sh", "-c", "echo hook-test"],
+        "timeout_ms": 1_000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "shell", &serde_json::to_string(&args).unwrap()),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("m1", "Done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    mount_sse_sequence(&server, responses).await;
+
+    let provider_override = format!(
+        "model_providers.mock={{ name = \"mock\", base_url = \"{}/v1\", env_key = \"PATH\", wire_api = \"responses\" }}",
+        server.uri()
+    );
+
+    let home = TempDir::new().unwrap();
+    std::fs::write(
+        home.path().join("config.toml"),
+        "[hooks]\ninproc=[\"event_log_jsonl\"]\n",
+    )
+    .unwrap();
+
+    let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+    let mut cmd = AssertCommand::new(bin);
+    cmd.arg("exec")
+        .arg("--no-hooks")
+        .arg("--skip-git-repo-check")
+        .arg("-c")
+        .arg(&provider_override)
+        .arg("-c")
+        .arg("model_provider=\"mock\"")
+        .arg("-C")
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .arg("hello?\n");
+    cmd.env("CODEX_HOME", home.path())
+        .env("OPENAI_API_KEY", "dummy")
+        .env("OPENAI_BASE_URL", format!("{}/v1", server.uri()));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    let log_path = home.path().join("hooks.jsonl");
+    assert!(!log_path.exists());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_cli_inproc_hook_list_logs_tool_call_finished() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+
+    let call_id = "hooks-tool-call";
+    let args = serde_json::json!({
+        "command": ["/bin/sh", "-c", "echo hook-test"],
+        "timeout_ms": 1_000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "shell", &serde_json::to_string(&args).unwrap()),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("m1", "Done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    mount_sse_sequence(&server, responses).await;
+
+    let provider_override = format!(
+        "model_providers.mock={{ name = \"mock\", base_url = \"{}/v1\", env_key = \"PATH\", wire_api = \"responses\" }}",
+        server.uri()
+    );
+
+    let home = TempDir::new().unwrap();
+    let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+    let mut cmd = AssertCommand::new(bin);
+    cmd.arg("exec")
+        .arg("--skip-git-repo-check")
+        .arg("-c")
+        .arg(&provider_override)
+        .arg("-c")
+        .arg("model_provider=\"mock\"")
+        .arg("-c")
+        .arg("hooks.inproc=[\"tool_call_summary\"]")
+        .arg("-C")
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .arg("hello?\n");
+    cmd.env("CODEX_HOME", home.path())
+        .env("OPENAI_API_KEY", "dummy")
+        .env("OPENAI_BASE_URL", format!("{}/v1", server.uri()));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    let log_path = home.path().join("hooks-tool-calls.log");
+    let contents = std::fs::read_to_string(&log_path)
+        .unwrap_or_else(|err| panic!("failed to read {path}: {err}", path = log_path.display()));
+    assert!(
+        contents.contains("type=tool-call-finished tool=shell status=completed"),
+        "unexpected log contents: {contents:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_cli_no_hooks_disables_inproc_hook_list() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+
+    let call_id = "hooks-tool-call";
+    let args = serde_json::json!({
+        "command": ["/bin/sh", "-c", "echo hook-test"],
+        "timeout_ms": 1_000,
+    });
+
+    let responses = vec![
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_function_call(call_id, "shell", &serde_json::to_string(&args).unwrap()),
+            ev_completed("resp-1"),
+        ]),
+        sse(vec![
+            ev_assistant_message("m1", "Done"),
+            ev_completed("resp-2"),
+        ]),
+    ];
+    mount_sse_sequence(&server, responses).await;
+
+    let provider_override = format!(
+        "model_providers.mock={{ name = \"mock\", base_url = \"{}/v1\", env_key = \"PATH\", wire_api = \"responses\" }}",
+        server.uri()
+    );
+
+    let home = TempDir::new().unwrap();
+    let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+    let mut cmd = AssertCommand::new(bin);
+    cmd.arg("exec")
+        .arg("--no-hooks")
+        .arg("--skip-git-repo-check")
+        .arg("-c")
+        .arg(&provider_override)
+        .arg("-c")
+        .arg("model_provider=\"mock\"")
+        .arg("-c")
+        .arg("hooks.inproc=[\"tool_call_summary\"]")
+        .arg("-C")
+        .arg(env!("CARGO_MANIFEST_DIR"))
+        .arg("hello?\n");
+    cmd.env("CODEX_HOME", home.path())
+        .env("OPENAI_API_KEY", "dummy")
+        .env("OPENAI_BASE_URL", format!("{}/v1", server.uri()));
+
+    let output = cmd.output().unwrap();
+    assert!(output.status.success());
+
+    let log_path = home.path().join("hooks-tool-calls.log");
+    assert!(
+        !log_path.exists(),
+        "tool-call summary log should not exist under --no-hooks"
     );
 }
 

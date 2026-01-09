@@ -31,6 +31,7 @@ mod exec_policy;
 pub mod features;
 mod flags;
 pub mod git_info;
+pub mod hooks;
 pub mod hooks_test;
 pub mod landlock;
 pub mod mcp;
@@ -98,7 +99,6 @@ mod function_tool;
 pub mod prefs;
 mod state;
 mod tasks;
-mod user_notification;
 mod user_shell_command;
 pub mod util;
 

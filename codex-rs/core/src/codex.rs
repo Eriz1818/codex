@@ -17,6 +17,7 @@ use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::exec_policy::ExecPolicyManager;
 use crate::features::Feature;
 use crate::features::Features;
+use crate::hooks::UserHooks;
 use crate::models_manager::manager::ModelsManager;
 use crate::models_manager::model_family::ModelFamily;
 use crate::parse_command::parse_command;
@@ -26,7 +27,6 @@ use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
 use crate::terminal;
 use crate::truncate::TruncationPolicy;
-use crate::user_notification::UserHooks;
 use crate::util::error_or_panic;
 use async_channel::Receiver;
 use async_channel::Sender;
@@ -702,6 +702,8 @@ impl Session {
                 config.codex_home.clone(),
                 config.hooks.clone(),
                 Some(tx_event.clone()),
+                config.sandbox_policy.get().clone(),
+                config.codex_linux_sandbox_exe.clone(),
             ),
             rollout: Mutex::new(Some(rollout_recorder)),
             user_shell: Arc::new(default_shell),
@@ -3781,6 +3783,8 @@ mod tests {
                 config.codex_home.clone(),
                 crate::config::HooksConfig::default(),
                 None,
+                config.sandbox_policy.get().clone(),
+                config.codex_linux_sandbox_exe.clone(),
             ),
             rollout: Mutex::new(None),
             user_shell: Arc::new(default_user_shell()),
@@ -3874,6 +3878,8 @@ mod tests {
                 config.codex_home.clone(),
                 crate::config::HooksConfig::default(),
                 None,
+                config.sandbox_policy.get().clone(),
+                config.codex_linux_sandbox_exe.clone(),
             ),
             rollout: Mutex::new(None),
             user_shell: Arc::new(default_user_shell()),
