@@ -225,6 +225,18 @@ pub enum SharedDirLinkOutcome {
     Failed(String),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SharedDirLinkMode {
+    /// Link to workspace root if possible; skip on non-empty directories.
+    LinkOnly,
+    /// Migrate untracked files into the workspace root (conflict-safe), then link.
+    /// When `include_ignored` is true, also migrates ignored-but-not-tracked paths.
+    Migrate { include_ignored: bool },
+    /// Replace the worktree path with a link to the workspace root, even if it
+    /// means deleting existing contents.
+    Replace,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SharedDirLinkAction {
     pub shared_dir: String,
@@ -692,21 +704,18 @@ fn move_path(source: &Path, destination: &Path) -> Result<(), String> {
 async fn list_git_untracked_entries_under(
     cwd: &Path,
     pathspec: &Path,
+    include_ignored: bool,
 ) -> Result<Vec<String>, String> {
     let spec = pathspec.to_string_lossy();
-    let Some(output) = run_git_command_with_timeout(
-        &[
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "--directory",
-            "--",
-            &spec,
-        ],
-        cwd,
-    )
-    .await
-    else {
+
+    let mut args = vec!["ls-files", "--others", "--exclude-standard", "--directory"];
+    if include_ignored {
+        args.push("--ignored");
+    }
+    args.push("--");
+    args.push(&spec);
+
+    let Some(output) = run_git_command_with_timeout(&args, cwd).await else {
         return Err(String::from("Failed to run `git ls-files`"));
     };
 
@@ -734,8 +743,14 @@ async fn link_one_shared_dir(
     worktree_root: &Path,
     workspace_root: &Path,
     shared_dir: &str,
-    migrate_untracked: bool,
+    mode: SharedDirLinkMode,
 ) -> SharedDirLinkAction {
+    let (migrate_untracked, include_ignored, replace_existing) = match mode {
+        SharedDirLinkMode::LinkOnly => (false, false, false),
+        SharedDirLinkMode::Migrate { include_ignored } => (true, include_ignored, false),
+        SharedDirLinkMode::Replace => (false, false, true),
+    };
+
     let pathspec = match validate_repo_relative_dir(shared_dir) {
         Ok(pathspec) => pathspec,
         Err(err) => {
@@ -820,8 +835,44 @@ async fn link_one_shared_dir(
             }
         };
         let link_is_symlink = link_metadata.file_type().is_symlink();
+        let mut removed_for_replace = false;
 
-        if link_is_symlink {
+        if replace_existing {
+            if link_is_symlink || link_metadata.is_file() {
+                if let Err(err) = std::fs::remove_file(&link_path) {
+                    return SharedDirLinkAction {
+                        shared_dir: shared_dir.to_string(),
+                        link_path,
+                        target_path,
+                        outcome: SharedDirLinkOutcome::Failed(format!(
+                            "Failed to remove {link_display}: {err}"
+                        )),
+                    };
+                }
+                removed_for_replace = true;
+            } else if link_metadata.is_dir() {
+                if let Err(err) = std::fs::remove_dir_all(&link_path) {
+                    return SharedDirLinkAction {
+                        shared_dir: shared_dir.to_string(),
+                        link_path,
+                        target_path,
+                        outcome: SharedDirLinkOutcome::Failed(format!(
+                            "Failed to remove {link_display}: {err}"
+                        )),
+                    };
+                }
+                removed_for_replace = true;
+            } else {
+                return SharedDirLinkAction {
+                    shared_dir: shared_dir.to_string(),
+                    link_path,
+                    target_path,
+                    outcome: SharedDirLinkOutcome::Skipped(String::from(
+                        "Path exists and is not a directory or a link; refusing to replace it with a link.",
+                    )),
+                };
+            }
+        } else if link_is_symlink {
             // The path is already a symlink (potentially broken or pointing elsewhere). It's safe
             // to replace it with the desired link target.
         } else if link_metadata.is_dir() {
@@ -838,7 +889,9 @@ async fn link_one_shared_dir(
             };
 
             if !empty && migrate_untracked {
-                match list_git_untracked_entries_under(worktree_root, &pathspec).await {
+                match list_git_untracked_entries_under(worktree_root, &pathspec, include_ignored)
+                    .await
+                {
                     Ok(entries) if entries.is_empty() => {
                         return SharedDirLinkAction {
                             shared_dir: shared_dir.to_string(),
@@ -888,7 +941,7 @@ async fn link_one_shared_dir(
                     let reason = if migrate_untracked {
                         "Directory is not empty; refusing to replace it with a link after migration."
                     } else {
-                        "Directory is not empty; run `/worktree link-shared --migrate` to migrate git-untracked files, then retry."
+                        "Directory is not empty; run `/worktree link-shared` to migrate+link, or migrate manually."
                     };
                     return SharedDirLinkAction {
                         shared_dir: shared_dir.to_string(),
@@ -917,13 +970,15 @@ async fn link_one_shared_dir(
             };
         }
 
-        if let Err(err) = remove_if_exists(&link_path) {
-            return SharedDirLinkAction {
-                shared_dir: shared_dir.to_string(),
-                link_path,
-                target_path,
-                outcome: SharedDirLinkOutcome::Failed(err),
-            };
+        if !removed_for_replace {
+            if let Err(err) = remove_if_exists(&link_path) {
+                return SharedDirLinkAction {
+                    shared_dir: shared_dir.to_string(),
+                    link_path,
+                    target_path,
+                    outcome: SharedDirLinkOutcome::Failed(err),
+                };
+            }
         }
     } else if let Some(parent) = link_path.parent()
         && let Err(err) = std::fs::create_dir_all(parent)
@@ -955,6 +1010,15 @@ async fn link_one_shared_dir(
     }
 }
 
+pub async fn link_worktree_shared_dir(
+    worktree_root: &Path,
+    workspace_root: &Path,
+    shared_dir: &str,
+    mode: SharedDirLinkMode,
+) -> SharedDirLinkAction {
+    link_one_shared_dir(worktree_root, workspace_root, shared_dir, mode).await
+}
+
 pub async fn link_worktree_shared_dirs(
     worktree_root: &Path,
     workspace_root: &Path,
@@ -963,7 +1027,15 @@ pub async fn link_worktree_shared_dirs(
     let mut results: Vec<SharedDirLinkAction> = Vec::new();
 
     for shared_dir in shared_dirs {
-        results.push(link_one_shared_dir(worktree_root, workspace_root, shared_dir, false).await);
+        results.push(
+            link_worktree_shared_dir(
+                worktree_root,
+                workspace_root,
+                shared_dir,
+                SharedDirLinkMode::LinkOnly,
+            )
+            .await,
+        );
     }
 
     results
@@ -977,7 +1049,17 @@ pub async fn link_worktree_shared_dirs_migrating_untracked(
     let mut results: Vec<SharedDirLinkAction> = Vec::new();
 
     for shared_dir in shared_dirs {
-        results.push(link_one_shared_dir(worktree_root, workspace_root, shared_dir, true).await);
+        results.push(
+            link_worktree_shared_dir(
+                worktree_root,
+                workspace_root,
+                shared_dir,
+                SharedDirLinkMode::Migrate {
+                    include_ignored: true,
+                },
+            )
+            .await,
+        );
     }
 
     results
@@ -1007,7 +1089,7 @@ pub async fn worktree_doctor_lines(
     if shared_dirs.is_empty() {
         lines.push(String::from("shared dirs: (none configured)"));
         lines.push(String::from(
-            "Tip: set `worktrees.shared_dirs` in config to enable `/worktree link-shared`.",
+            "Tip: add shared dirs via `/worktree shared add <dir>`, then run `/worktree link-shared`.",
         ));
         return lines;
     }
@@ -1084,6 +1166,26 @@ pub async fn worktree_doctor_lines(
                 lines.push(format!("    - … +{} more", summary.total - 3));
             }
         }
+
+        if !linked {
+            if path_entry_exists(&link_path) {
+                if tracked == Some(true) {
+                    lines.push(String::from(
+                        "    action: remove this dir from `worktrees.shared_dirs` (tracked files present)",
+                    ));
+                } else if link_is_symlink {
+                    lines.push(String::from(
+                        "    action: run `/worktree link-shared` to re-link to workspace root",
+                    ));
+                } else {
+                    lines.push(String::from(
+                        "    action: run `/worktree link-shared` and choose migrate+link if needed",
+                    ));
+                }
+            } else {
+                lines.push(String::from("    action: run `/worktree link-shared`"));
+            }
+        }
     }
 
     lines.push(String::from("Next steps:"));
@@ -1091,7 +1193,7 @@ pub async fn worktree_doctor_lines(
         "- Run `/worktree link-shared` to apply links for configured shared dirs.",
     ));
     lines.push(String::from(
-        "- If a shared dir is refused due to non-empty content, run `/worktree link-shared --migrate` or migrate files into the workspace root first, then retry.",
+        "- If a shared dir is refused due to non-empty content, rerun `/worktree link-shared` and choose migrate+link (or replace+link), or migrate files into the workspace root first, then retry.",
     ));
     lines.push(String::from(
         "- If you want shared-dir links applied automatically on switch, enable `worktrees.auto_link_shared_dirs = true`.",
@@ -1151,6 +1253,26 @@ pub async fn init_git_worktree(
     branch: &str,
     worktree_path: Option<&Path>,
 ) -> Result<PathBuf, String> {
+    let branch_exists = git_branch_exists(workspace_root, branch.trim()).await?;
+    init_git_worktree_with_mode(
+        workspace_root,
+        name,
+        branch,
+        worktree_path,
+        !branch_exists,
+        None,
+    )
+    .await
+}
+
+pub async fn init_git_worktree_with_mode(
+    workspace_root: &Path,
+    name: &str,
+    branch: &str,
+    worktree_path: Option<&Path>,
+    create_branch: bool,
+    base_ref: Option<&str>,
+) -> Result<PathBuf, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err(String::from("worktree name is empty"));
@@ -1175,23 +1297,23 @@ pub async fn init_git_worktree(
             .map_err(|err| format!("Failed to create {}: {err}", parent.display()))?;
     }
 
-    let branch_exists = git_branch_exists(workspace_root, &branch).await?;
-    let args: Vec<String> = if branch_exists {
-        vec![
-            "worktree".to_string(),
-            "add".to_string(),
-            path.display().to_string(),
-            branch.clone(),
-        ]
+    let mut args: Vec<String> = Vec::new();
+    args.push(String::from("worktree"));
+    args.push(String::from("add"));
+    if create_branch {
+        args.push(String::from("-b"));
+        args.push(branch.clone());
+        args.push(path.display().to_string());
+        if let Some(base_ref) = base_ref {
+            let base_ref = base_ref.trim();
+            if !base_ref.is_empty() {
+                args.push(base_ref.to_string());
+            }
+        }
     } else {
-        vec![
-            "worktree".to_string(),
-            "add".to_string(),
-            "-b".to_string(),
-            branch.clone(),
-            path.display().to_string(),
-        ]
-    };
+        args.push(path.display().to_string());
+        args.push(branch.clone());
+    }
 
     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
     let output = run_git_command_with_timeout_result(&args_ref, workspace_root).await?;
@@ -2388,6 +2510,62 @@ mod tests {
         assert!(path_points_to(
             &wt_root.join(&shared_dir),
             &repo_path.join(&shared_dir)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn link_shared_dirs_migrate_includes_ignored_content() {
+        skip_if_sandbox!();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let repo_path = create_test_git_repo(&temp_dir).await;
+
+        // Ensure the shared dir is ignored so "untracked only" migration would miss it.
+        std::fs::write(repo_path.join(".gitignore"), "notes/\n").unwrap();
+        let _ = std::process::Command::new("git")
+            .args(["add", ".gitignore"])
+            .current_dir(&repo_path)
+            .output()
+            .expect("git add .gitignore");
+        let _ = std::process::Command::new("git")
+            .args(["commit", "-m", "add ignore for notes"])
+            .current_dir(&repo_path)
+            .output()
+            .expect("git commit");
+
+        // Create a linked worktree and put ignored content in it.
+        let wt_root = temp_dir.path().join("wt");
+        let _ = std::process::Command::new("git")
+            .args([
+                "worktree",
+                "add",
+                wt_root.to_str().unwrap(),
+                "-b",
+                "feature/ignored-migrate",
+            ])
+            .current_dir(&repo_path)
+            .output()
+            .expect("git worktree add");
+
+        let ignored_dir = wt_root.join("notes");
+        std::fs::create_dir_all(&ignored_dir).unwrap();
+        std::fs::write(ignored_dir.join("scratch.txt"), "hello").unwrap();
+
+        let shared_dir = String::from("notes");
+        let actions = link_worktree_shared_dirs_migrating_untracked(
+            &wt_root,
+            &repo_path,
+            std::slice::from_ref(&shared_dir),
+        )
+        .await;
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(actions[0].outcome, SharedDirLinkOutcome::Linked));
+
+        // Ignored content is migrated into workspace root.
+        assert!(repo_path.join("notes").join("scratch.txt").is_file());
+        assert!(path_points_to(
+            &wt_root.join("notes"),
+            &repo_path.join("notes")
         ));
     }
 
