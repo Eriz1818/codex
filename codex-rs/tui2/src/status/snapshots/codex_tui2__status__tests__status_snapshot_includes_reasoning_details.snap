@@ -1,12 +1,13 @@
 ---
 source: tui2/src/status/tests.rs
-assertion_line: 177
 expression: sanitized
 ---
 /status
 
 ╭───────────────────────────────────────────────────────────────────────────╮
-│  >_ xtreme-Codex (v0.1.0)                                                 │
+│  ⚡ xtreme-Codex (v0.1.0)                                                 │
+│                                                                           │
+│  power: ⚡⚡⚡                                                            │
 │                                                                           │
 │ Visit https://chatgpt.com/codex/settings/usage for up-to-date             │
 │ information on rate limits and credits                                    │

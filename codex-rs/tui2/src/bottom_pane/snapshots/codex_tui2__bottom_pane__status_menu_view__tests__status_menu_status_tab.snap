@@ -3,10 +3,10 @@ source: tui2/src/bottom_pane/status_menu_view.rs
 expression: "render_lines(&view, 60)"
 ---
                                                             
-  [ Status ]  [ Settings ]  [ Tools ]  (bottom-pane)        
+  [ Status ]  [ Settings ]  [ ⚡ Tools ]  (bottom-pane)      
                                                             
   • Status card                                             
                                                             
-  Tip: Tab to toggle settings or open tools.                
+  Tip: Tab to toggle settings or open ⚡ Tools.              
                                                             
   Tab: switch tab  ↑/↓: select/scroll  Enter: toggle/run  Es

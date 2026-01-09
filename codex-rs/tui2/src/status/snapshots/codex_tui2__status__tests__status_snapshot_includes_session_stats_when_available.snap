@@ -1,0 +1,30 @@
+---
+source: tui2/src/status/tests.rs
+assertion_line: 955
+expression: rendered_lines
+---
+/status
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  ⚡ xtreme-Codex (v0.1.0)                                                    │
+│                                                                              │
+│  power: ⚡⚡⚡                                                               │
+│                                                                              │
+│ Visit https://chatgpt.com/codex/settings/usage for up-to-date                │
+│ information on rate limits and credits                                       │
+│                                                                              │
+│  UI:               tui2                                                      │
+│  Model:            gpt-5.1-codex-max (reasoning none, summaries auto)        │
+│  Directory: [[workspace]]                                                    │
+│  CODEX_HOME: [[codex_home]]                                                    │
+│  Approval:         on-request                                                │
+│  Sandbox:          read-only                                                 │
+│  Agents.md:        ../../AGENTS.md                                           │
+│  Auto-compact:     disabled                                                  │
+│  Thoughts:         hidden                                                    │
+│  Session stats:    3 turns · 2 cmds · 1 tools · 1 edits · 4 files · 1 tests  │
+│                                                                              │
+│  Token usage:      1.9K total  (1K input + 900 output)                       │
+│  Context window:   [████████████████████] 99% left (2.25K used / 272K)       │
+│  Limits:           data not available yet                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯

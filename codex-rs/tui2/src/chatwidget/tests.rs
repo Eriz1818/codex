@@ -368,6 +368,7 @@ async fn make_chatwidget_manual(
         enhanced_keys_supported: false,
         placeholder_text: "Ask xcodex to do anything".to_string(),
         disable_paste_burst: false,
+        xtreme_ui_enabled: true,
         animations_enabled: cfg.animations,
         skills: None,
     });
@@ -428,6 +429,8 @@ async fn make_chatwidget_manual(
         is_review_mode: false,
         pre_review_token_info: None,
         needs_final_message_separator: false,
+        turn_summary: history_cell::TurnSummary::default(),
+        session_stats: crate::status::SessionStats::default(),
         last_rendered_width: std::cell::Cell::new(None),
         feedback: codex_feedback::CodexFeedback::new(),
         current_rollout_path: None,
@@ -495,6 +498,84 @@ async fn mcp_startup_banner_includes_timeout_hint() {
     assert!(
         message.contains("`/mcp timeout basic-memory 30`"),
         "expected timeout hint; got: {message}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_startup_complete_logs_warning_when_working() {
+    use codex_core::protocol::McpStartupFailure;
+
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
+
+    chat.bottom_pane.set_task_running(true);
+
+    chat.handle_codex_event(Event {
+        id: "mcp-1".into(),
+        msg: EventMsg::McpStartupComplete(McpStartupCompleteEvent {
+            ready: Vec::new(),
+            failed: vec![McpStartupFailure {
+                server: "alpha".to_string(),
+                error: "boom".to_string(),
+            }],
+            cancelled: Vec::new(),
+        }),
+    });
+
+    assert!(
+        chat.bottom_pane.mcp_startup_banner_message().is_none(),
+        "expected MCP startup banner to not be pinned while working"
+    );
+
+    let rendered = drain_insert_history(&mut rx);
+    let rendered_text = rendered
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered_text.contains("MCP startup incomplete"),
+        "expected warning history cell; got: {rendered_text}"
+    );
+    assert!(
+        rendered_text.contains("`/mcp retry failed`"),
+        "expected retry hint; got: {rendered_text}"
+    );
+    assert!(
+        !rendered_text.contains("Press `r`"),
+        "expected no `r` key hint while working; got: {rendered_text}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_startup_banner_clears_after_user_submits_prompt() {
+    use codex_core::protocol::McpStartupFailure;
+
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(None).await;
+
+    chat.handle_codex_event(Event {
+        id: "mcp-1".into(),
+        msg: EventMsg::McpStartupComplete(McpStartupCompleteEvent {
+            ready: Vec::new(),
+            failed: vec![McpStartupFailure {
+                server: "alpha".to_string(),
+                error: "boom".to_string(),
+            }],
+            cancelled: Vec::new(),
+        }),
+    });
+
+    assert!(drain_insert_history(&mut rx).is_empty());
+    assert!(
+        chat.bottom_pane.mcp_startup_banner_message().is_some(),
+        "expected banner to be visible when idle"
+    );
+
+    chat.bottom_pane.set_composer_text("hello".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert!(
+        chat.bottom_pane.mcp_startup_banner_message().is_none(),
+        "expected banner to clear after the user submits a prompt"
     );
 }
 
@@ -3130,7 +3211,12 @@ async fn stream_recovery_restores_previous_status_header() {
         .bottom_pane
         .status_widget()
         .expect("status indicator should be visible");
-    assert_eq!(status.header(), "Working");
+    let expected_header = if crate::xtreme::xtreme_ui_enabled(&chat.config) {
+        "Charging"
+    } else {
+        "Working"
+    };
+    assert_eq!(status.header(), expected_header);
     assert_eq!(status.details(), None);
     assert!(chat.retry_status_header.is_none());
 }

@@ -442,7 +442,7 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
             condition: DisplayCondition::Always,
         }],
         prefix: "",
-        label: " for tools",
+        label: " for ⚡Tools",
     },
     ShortcutDescriptor {
         id: ShortcutId::InsertNewline,

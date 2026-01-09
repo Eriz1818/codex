@@ -1,0 +1,5 @@
+Press Ctrl+O to open ⚡Tools.
+Use /xtreme to open the ⚡Tools control panel.
+Want more power? Use /approvals to choose how much xcodex can do without asking.
+Use /review to quickly inspect what xcodex changed.
+Use /hooks to automate xcodex workflows.

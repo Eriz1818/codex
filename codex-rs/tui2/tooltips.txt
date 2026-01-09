@@ -3,12 +3,12 @@ Use /autocompact (or /autocompact on|off) to control automatic compaction.
 Start a fresh idea with /new; the previous session stays in history.
 Use /feedback to save a local report you can attach to an issue.
 Switch models or reasoning effort quickly with /model.
-You can run any shell command from xcodex using `!` (e.g. `!ls`)
+You can run any shell command using `!` (e.g. `!ls`)
 Type / to open the command popup; Tab autocompletes slash commands and saved prompts.
 You can define your own `/` commands with custom prompts. More info: https://developers.openai.com/codex/guides/slash-commands#create-your-own-slash-commands-with-custom-prompts
 When the composer is empty, press Esc to step back and edit your last message; Enter confirms.
 Paste an image with Ctrl+V to attach it to your next message.
-You can resume a previous conversation by running `xcodex resume`
+You can resume a previous conversation with /resume
 In the resume picker, you can type to search; use ↑/↓ to browse; Enter resumes.
 In the resume picker, press Ctrl+Y to copy the continuation command for the selected session.
 In the resume picker, press Tab to toggle between sessions in this directory vs all directories.

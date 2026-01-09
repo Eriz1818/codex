@@ -1713,6 +1713,15 @@ impl App {
                 // Leaving alt-screen may blank the inline viewport; force a redraw either way.
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::DispatchSlashCommand(cmd) => {
+                self.chat_widget.dispatch_slash_command(cmd);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::OpenTranscriptOverlay => {
+                let _ = tui.enter_alt_screen();
+                self.overlay = Some(Overlay::new_transcript(self.transcript_cells.clone()));
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::InsertHistoryCell(cell) => {
                 let cell: Arc<dyn HistoryCell> = cell.into();
                 if let Some(Overlay::Transcript(transcript)) = &mut self.overlay {
@@ -1820,6 +1829,11 @@ impl App {
             AppEvent::UpdateVerboseToolOutput(verbose) => {
                 self.config.tui_verbose_tool_output = verbose;
                 self.chat_widget.set_verbose_tool_output(verbose);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::UpdateXtremeMode(mode) => {
+                self.config.tui_xtreme_mode = mode;
+                self.chat_widget.set_xtreme_mode(mode);
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::WorktreeListUpdated {
@@ -2242,6 +2256,36 @@ impl App {
                             self.chat_widget.add_error_message(format!(
                                 "Failed to save output verbosity: {err}"
                             ));
+                        }
+                    }
+                }
+            }
+            AppEvent::PersistXtremeMode(mode) => {
+                let profile = self.active_profile.as_deref();
+                let mode_value = match mode {
+                    codex_core::config::types::XtremeMode::Auto => "auto",
+                    codex_core::config::types::XtremeMode::On => "on",
+                    codex_core::config::types::XtremeMode::Off => "off",
+                };
+                match ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_profile(profile)
+                    .with_edits([ConfigEdit::SetPath {
+                        segments: vec!["tui".to_string(), "xtreme_mode".to_string()],
+                        value: toml_edit::value(mode_value),
+                    }])
+                    .apply()
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(err) => {
+                        tracing::error!(error = %err, "failed to persist xtreme mode");
+                        if let Some(profile) = profile {
+                            self.chat_widget.add_error_message(format!(
+                                "Failed to save xtreme mode for profile `{profile}`: {err}"
+                            ));
+                        } else {
+                            self.chat_widget
+                                .add_error_message(format!("Failed to save xtreme mode: {err}"));
                         }
                     }
                 }

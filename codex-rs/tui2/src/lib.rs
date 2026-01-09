@@ -92,6 +92,7 @@ mod update_prompt;
 mod updates;
 mod version;
 mod xcodex_first_run_wizard;
+mod xtreme;
 
 mod wrapping;
 

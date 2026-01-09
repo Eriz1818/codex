@@ -1,18 +1,23 @@
 ---
 source: tui2/src/bottom_pane/status_menu_view.rs
-assertion_line: 631
 expression: "render_lines(&view, 60)"
 ---
                                                             
-  [ Status ]  [ Settings ]  [ Tools ]  (bottom-pane)        
+  [ Status ]  [ Settings ]  [ ⚡ Tools ]  (bottom-pane)      
                                                             
-  Tools                                                     
-  Quick actions (opens other pickers/popups).               
+  ⚡ Tools                                                   
+  Toggles and shortcuts.                                    
                                                             
-  › Resume…                                                 
-    Worktrees…                                              
+  › [x] Xtreme mode (on)                                    
+    [ ] Verbose tool output                                 
+    Review…                                                 
+    Model…                                                  
     Approvals…                                              
+    Worktrees…                                              
+    Hooks…                                                  
+    Transcript…                                             
+    Resume…                                                 
                                                             
-  Pick a previous session to continue.                      
+  Toggle xtreme UI styling (persists).                      
                                                             
   Tab: switch tab  ↑/↓: select/scroll  Enter: toggle/run  Es

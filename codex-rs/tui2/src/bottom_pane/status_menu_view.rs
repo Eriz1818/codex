@@ -12,6 +12,8 @@ use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
+use codex_core::config::types::XtremeMode;
+
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::history_cell::HistoryCell;
@@ -43,6 +45,8 @@ pub(crate) struct StatusMenuView {
     status_bar_show_git_branch: bool,
     status_bar_show_worktree: bool,
     verbose_tool_output: bool,
+    xtreme_mode: XtremeMode,
+    xtreme_ui_enabled: bool,
     status_scroll_y: u16,
     selected_settings_row: usize,
     selected_tools_row: usize,
@@ -58,14 +62,22 @@ impl StatusMenuView {
         status_cell: Box<dyn HistoryCell>,
         status_bar_show_git_branch: bool,
         status_bar_show_worktree: bool,
+        xtreme_mode: XtremeMode,
         verbose_tool_output: bool,
     ) -> Self {
+        let xtreme_ui_enabled = match xtreme_mode {
+            XtremeMode::Auto => codex_core::config::is_xcodex_invocation(),
+            XtremeMode::On => true,
+            XtremeMode::Off => false,
+        };
         Self {
             tab,
             complete: false,
             status_bar_show_git_branch,
             status_bar_show_worktree,
             verbose_tool_output,
+            xtreme_mode,
+            xtreme_ui_enabled,
             status_scroll_y: 0,
             selected_settings_row: 0,
             selected_tools_row: 0,
@@ -102,8 +114,8 @@ impl StatusMenuView {
             StatusMenuTab::Status | StatusMenuTab::Tools => "[ Settings ]".dim(),
         };
         let tools = match self.tab {
-            StatusMenuTab::Tools => "[ Tools ]".bold().cyan(),
-            StatusMenuTab::Status | StatusMenuTab::Settings => "[ Tools ]".dim(),
+            StatusMenuTab::Tools => "[ ⚡Tools ]".bold().cyan(),
+            StatusMenuTab::Status | StatusMenuTab::Settings => "[ ⚡Tools ]".dim(),
         };
 
         vec![
@@ -123,7 +135,7 @@ impl StatusMenuView {
     }
 
     fn tools_row_count(&self) -> usize {
-        3
+        9
     }
 
     fn clamp_selected_row(&mut self) {
@@ -150,7 +162,7 @@ impl StatusMenuView {
                         "Tip: ".dim(),
                         "Tab".bold(),
                         " ".dim(),
-                        "to toggle settings or open tools.".dim(),
+                        "to toggle settings or open ⚡Tools.".dim(),
                     ]
                     .into(),
                 );
@@ -162,8 +174,14 @@ impl StatusMenuView {
                 lines.extend(self.build_settings_rows());
             }
             StatusMenuTab::Tools => {
-                lines.push("Tools".bold().into());
-                lines.push("Quick actions (opens other pickers/popups).".dim().into());
+                lines.push(
+                    vec![
+                        crate::xtreme::bolt_span(self.xtreme_ui_enabled),
+                        "Tools".bold(),
+                    ]
+                    .into(),
+                );
+                lines.push("Toggles and shortcuts.".dim().into());
                 lines.push(Line::from(""));
                 lines.extend(self.build_tools_rows());
                 lines.push(Line::from(""));
@@ -261,7 +279,7 @@ impl StatusMenuView {
         }
 
         lines.push(Line::from(""));
-        lines.push(vec!["Tip: ".dim(), "Tab".bold(), " ".dim(), "to Tools.".dim()].into());
+        lines.push(vec!["Tip: ".dim(), "Tab".bold(), " ".dim(), "to ⚡Tools.".dim()].into());
 
         lines
     }
@@ -277,9 +295,60 @@ impl StatusMenuView {
             }
         };
 
-        let items = ["Resume…", "Worktrees…", "Approvals…"];
+        let checkbox = |enabled: bool| -> Span<'static> {
+            if enabled {
+                "[x] ".green()
+            } else {
+                "[ ] ".dim()
+            }
+        };
+
+        let xtreme_mode_label = match self.xtreme_mode {
+            XtremeMode::Auto => "auto",
+            XtremeMode::On => "on",
+            XtremeMode::Off => "off",
+        };
+
+        // Row 0: toggle xtreme mode.
+        {
+            let selected = self.selected_tools_row == 0;
+            lines.push(
+                vec![
+                    selected_prefix(selected),
+                    checkbox(self.xtreme_ui_enabled),
+                    "Xtreme mode ".into(),
+                    format!("({xtreme_mode_label})").dim(),
+                ]
+                .into(),
+            );
+        }
+
+        // Row 1: toggle verbose tool output.
+        {
+            let selected = self.selected_tools_row == 1;
+            lines.push(
+                vec![
+                    selected_prefix(selected),
+                    checkbox(self.verbose_tool_output),
+                    "Verbose tool output".into(),
+                ]
+                .into(),
+            );
+        }
+
+        // Rows 2+: quick actions.
+        let items = [
+            "Review…",
+            "Model…",
+            "Approvals…",
+            "Worktrees…",
+            "Hooks…",
+            "Transcript…",
+            "Resume…",
+        ];
         for (idx, label) in items.iter().enumerate() {
-            let selected = self.selected_tools_row == idx;
+            let row = idx + 2;
+            let selected = self.selected_tools_row == row;
             lines.push(vec![selected_prefix(selected), (*label).into()].into());
         }
 
@@ -288,9 +357,15 @@ impl StatusMenuView {
 
     fn selected_tool_hint_lines(&self) -> Vec<Line<'static>> {
         let hint = match self.selected_tools_row {
-            0 => "Pick a previous session to continue.",
-            1 => "Switch worktrees and manage shared dirs.",
-            2 => "Review and adjust approval/sandbox presets.",
+            0 => "Toggle xtreme UI styling (persists).",
+            1 => "Toggle verbose tool output in the transcript (persists).",
+            2 => "Review your changes and spot issues fast.",
+            3 => "Pick a model and reasoning effort.",
+            4 => "Review and adjust approval/sandbox presets.",
+            5 => "Switch worktrees and manage shared dirs.",
+            6 => "Automate xcodex with hooks.",
+            7 => "Open the full transcript in a scrollable view.",
+            8 => "Pick a previous session to continue.",
             _ => return Vec::new(),
         };
 
@@ -392,12 +467,43 @@ impl StatusMenuView {
             },
             StatusMenuTab::Tools => {
                 match self.selected_tools_row {
-                    0 => self.app_event_tx.send(AppEvent::OpenResumePicker),
-                    1 => self.app_event_tx.send(AppEvent::OpenWorktreeCommandMenu),
-                    2 => self.app_event_tx.send(AppEvent::OpenApprovalsPopup),
+                    0 => {
+                        self.xtreme_ui_enabled = !self.xtreme_ui_enabled;
+                        self.xtreme_mode = if self.xtreme_ui_enabled {
+                            XtremeMode::On
+                        } else {
+                            XtremeMode::Off
+                        };
+                        self.app_event_tx
+                            .send(AppEvent::UpdateXtremeMode(self.xtreme_mode));
+                        self.app_event_tx
+                            .send(AppEvent::PersistXtremeMode(self.xtreme_mode));
+                    }
+                    1 => {
+                        self.verbose_tool_output = !self.verbose_tool_output;
+                        self.app_event_tx
+                            .send(AppEvent::UpdateVerboseToolOutput(self.verbose_tool_output));
+                        self.app_event_tx
+                            .send(AppEvent::PersistVerboseToolOutput(self.verbose_tool_output));
+                    }
+                    2 => self.app_event_tx.send(AppEvent::DispatchSlashCommand(
+                        crate::slash_command::SlashCommand::Review,
+                    )),
+                    3 => self.app_event_tx.send(AppEvent::DispatchSlashCommand(
+                        crate::slash_command::SlashCommand::Model,
+                    )),
+                    4 => self.app_event_tx.send(AppEvent::OpenApprovalsPopup),
+                    5 => self.app_event_tx.send(AppEvent::OpenWorktreeCommandMenu),
+                    6 => self.app_event_tx.send(AppEvent::DispatchSlashCommand(
+                        crate::slash_command::SlashCommand::Hooks,
+                    )),
+                    7 => self.app_event_tx.send(AppEvent::OpenTranscriptOverlay),
+                    8 => self.app_event_tx.send(AppEvent::OpenResumePicker),
                     _ => {}
                 }
-                self.complete = true;
+                if self.selected_tools_row >= 2 {
+                    self.complete = true;
+                }
             }
             StatusMenuTab::Status => {}
         }
@@ -563,6 +669,7 @@ impl Renderable for StatusMenuView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_event::AppEvent;
     use insta::assert_snapshot;
     use ratatui::layout::Rect;
     use tokio::sync::mpsc::unbounded_channel;
@@ -598,7 +705,15 @@ mod tests {
             "Status card".to_string(),
             None,
         ));
-        let view = StatusMenuView::new(StatusMenuTab::Status, tx, status_cell, true, false, false);
+        let view = StatusMenuView::new(
+            StatusMenuTab::Status,
+            tx,
+            status_cell,
+            true,
+            false,
+            XtremeMode::On,
+            false,
+        );
         assert_snapshot!("status_menu_status_tab", render_lines(&view, 60));
     }
 
@@ -610,8 +725,15 @@ mod tests {
             "Status card".to_string(),
             None,
         ));
-        let mut view =
-            StatusMenuView::new(StatusMenuTab::Status, tx, status_cell, true, false, false);
+        let mut view = StatusMenuView::new(
+            StatusMenuTab::Status,
+            tx,
+            status_cell,
+            true,
+            false,
+            XtremeMode::On,
+            false,
+        );
         view.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         view.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         view.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
@@ -627,7 +749,46 @@ mod tests {
             "Status card".to_string(),
             None,
         ));
-        let view = StatusMenuView::new(StatusMenuTab::Tools, tx, status_cell, true, false, false);
+        let view = StatusMenuView::new(
+            StatusMenuTab::Tools,
+            tx,
+            status_cell,
+            true,
+            false,
+            XtremeMode::On,
+            false,
+        );
         assert_snapshot!("status_menu_tools_tab", render_lines(&view, 60));
+    }
+
+    #[test]
+    fn tools_tab_toggle_xtreme_mode_sends_update_and_persist() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let status_cell = Box::new(crate::history_cell::new_info_event(
+            "Status card".to_string(),
+            None,
+        ));
+        let mut view = StatusMenuView::new(
+            StatusMenuTab::Tools,
+            tx,
+            status_cell,
+            true,
+            false,
+            XtremeMode::On,
+            false,
+        );
+
+        view.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::UpdateXtremeMode(XtremeMode::Off))
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::PersistXtremeMode(XtremeMode::Off))
+        ));
+        assert!(rx.try_recv().is_err());
     }
 }

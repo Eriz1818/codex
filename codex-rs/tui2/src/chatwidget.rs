@@ -366,6 +366,8 @@ pub(crate) struct ChatWidget {
     pre_review_token_info: Option<Option<TokenUsageInfo>>,
     // Whether to add a final message separator after the last message
     needs_final_message_separator: bool,
+    turn_summary: history_cell::TurnSummary,
+    session_stats: crate::status::SessionStats,
 
     last_rendered_width: std::cell::Cell<Option<usize>>,
     // Feedback sink for /feedback
@@ -593,7 +595,13 @@ impl ChatWidget {
         self.bottom_pane.set_task_running(true);
         self.retry_status_header = None;
         self.bottom_pane.set_interrupt_hint_visible(true);
-        self.set_status_header(String::from("Working"));
+        self.turn_summary = history_cell::TurnSummary::default();
+        let header = if crate::xtreme::xtreme_ui_enabled(&self.config) {
+            "Charging"
+        } else {
+            "Working"
+        };
+        self.set_status_header(header.to_string());
         self.footer_token_info_at_task_start = self
             .footer_token_info
             .as_ref()
@@ -623,6 +631,7 @@ impl ChatWidget {
         });
 
         self.maybe_show_pending_rate_limit_prompt();
+        self.session_stats.turns_completed = self.session_stats.turns_completed.saturating_add(1);
     }
 
     pub(crate) fn set_token_info(&mut self, info: Option<TokenUsageInfo>) {
@@ -936,16 +945,6 @@ impl ChatWidget {
                 }
             }
         }
-        if let McpStartupStatus::Failed { error } = &ev.status {
-            let server = &ev.server;
-            let mut message = format!("MCP startup incomplete (failed: {server}).");
-            if let Some(tip) = Self::timeout_tip_for_failure(&ev.server, error) {
-                message.push(' ');
-                message.push_str(&tip);
-            }
-            message.push_str(" Run `/mcp` for details.");
-            self.set_mcp_startup_banner(Some(message));
-        }
         status.insert(ev.server, ev.status);
         self.mcp_startup_status = Some(status);
         self.bottom_pane.set_task_running(true);
@@ -1025,13 +1024,29 @@ impl ChatWidget {
                 let summary = parts.join("; ");
                 format!("MCP startup incomplete ({summary}).")
             };
-            message.push_str(" Press `r` to retry.");
+            let can_retry_in_place = self.queued_user_messages.is_empty()
+                && self.composer_is_empty()
+                && self.is_normal_backtrack_mode();
+            if can_retry_in_place {
+                message.push_str(" Press `r` to retry (or run `/mcp retry failed`).");
+            } else {
+                message.push_str(" Run `/mcp retry failed` to retry.");
+            }
             if let Some(tip) = Self::timeout_tip_for_failures(&ev.failed) {
                 message.push(' ');
                 message.push_str(&tip);
             }
             message.push_str(" Run `/mcp` for details.");
-            self.set_mcp_startup_banner(Some(message));
+
+            // Only pin the banner when retry is directly actionable from the main view
+            // (composer empty, no queued messages, and not currently "Working"). Otherwise
+            // log a one-time warning and avoid sticking the banner above the composer.
+            if can_retry_in_place {
+                self.set_mcp_startup_banner(Some(message));
+            } else {
+                self.set_mcp_startup_banner(None);
+                self.on_warning(message);
+            }
         }
 
         for server in &ev.ready {
@@ -1393,7 +1408,17 @@ impl ChatWidget {
                     .bottom_pane
                     .status_widget()
                     .map(super::status_indicator_widget::StatusIndicatorWidget::elapsed_seconds);
-                self.add_to_history(history_cell::FinalMessageSeparator::new(elapsed_seconds));
+                let xtreme_ui_enabled = crate::xtreme::xtreme_ui_enabled(&self.config);
+                let turn_summary = if self.turn_summary.is_empty() {
+                    None
+                } else {
+                    Some(self.turn_summary.clone())
+                };
+                self.add_to_history(history_cell::FinalMessageSeparator::new(
+                    elapsed_seconds,
+                    xtreme_ui_enabled,
+                    turn_summary,
+                ));
                 self.needs_final_message_separator = false;
                 needs_redraw = true;
             }
@@ -1469,6 +1494,19 @@ impl ChatWidget {
         &mut self,
         event: codex_core::protocol::PatchApplyEndEvent,
     ) {
+        if event.success {
+            self.turn_summary.patches = self.turn_summary.patches.saturating_add(1);
+            self.turn_summary.files_changed = self
+                .turn_summary
+                .files_changed
+                .saturating_add(event.changes.len());
+            self.session_stats.patches = self.session_stats.patches.saturating_add(1);
+            self.session_stats.files_changed = self
+                .session_stats
+                .files_changed
+                .saturating_add(event.changes.len());
+        }
+
         // If the patch was successful, just let the "Edited" block stand.
         // Otherwise, add a failure block.
         if !event.success {
@@ -1481,6 +1519,8 @@ impl ChatWidget {
         let command = shlex::try_join(ev.command.iter().map(String::as_str))
             .unwrap_or_else(|_| ev.command.join(" "));
         self.notify(Notification::ExecApprovalRequested { command });
+        self.session_stats.approvals_requested =
+            self.session_stats.approvals_requested.saturating_add(1);
 
         let request = ApprovalRequest::Exec {
             id,
@@ -1499,6 +1539,8 @@ impl ChatWidget {
         ev: ApplyPatchApprovalRequestEvent,
     ) {
         self.flush_answer_stream_with_separator();
+        self.session_stats.approvals_requested =
+            self.session_stats.approvals_requested.saturating_add(1);
 
         let request = ApprovalRequest::ApplyPatch {
             id,
@@ -1563,6 +1605,18 @@ impl ChatWidget {
             self.suppressed_exec_calls.insert(ev.call_id);
             return;
         }
+
+        self.turn_summary.exec_commands = self.turn_summary.exec_commands.saturating_add(1);
+        self.session_stats.exec_commands = self.session_stats.exec_commands.saturating_add(1);
+        if crate::exec_command::strip_bash_lc_and_escape(&ev.command).starts_with("cargo test") {
+            self.session_stats.tests_run = self.session_stats.tests_run.saturating_add(1);
+        }
+        if crate::xtreme::xtreme_ui_enabled(&self.config)
+            && self.current_status_header == "Charging"
+        {
+            self.set_status_header("Overclocking".to_string());
+        }
+
         let interaction_input = ev.interaction_input.clone();
         if let Some(cell) = self
             .active_cell
@@ -1596,6 +1650,13 @@ impl ChatWidget {
     pub(crate) fn handle_mcp_begin_now(&mut self, ev: McpToolCallBeginEvent) {
         self.flush_answer_stream_with_separator();
         self.flush_active_cell();
+        self.turn_summary.mcp_calls = self.turn_summary.mcp_calls.saturating_add(1);
+        self.session_stats.mcp_calls = self.session_stats.mcp_calls.saturating_add(1);
+        if crate::xtreme::xtreme_ui_enabled(&self.config)
+            && self.current_status_header == "Charging"
+        {
+            self.set_status_header("Overclocking".to_string());
+        }
         self.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
             ev.call_id,
             ev.invocation,
@@ -1657,8 +1718,13 @@ impl ChatWidget {
         } = common;
         let mut config = config;
         config.model = Some(model.clone());
+        let xtreme_ui_enabled = crate::xtreme::xtreme_ui_enabled(&config);
         let mut rng = rand::rng();
-        let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
+        let placeholder = if codex_core::config::is_xcodex_invocation() {
+            "Ask xcodex to do anything".to_string()
+        } else {
+            EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string()
+        };
         let codex_op_tx = spawn_agent(config.clone(), app_event_tx.clone(), conversation_manager);
         let auto_compact_enabled =
             codex_core::prefs::load_blocking(&config.codex_home).auto_compact_enabled;
@@ -1674,6 +1740,7 @@ impl ChatWidget {
                 enhanced_keys_supported,
                 placeholder_text: placeholder,
                 disable_paste_burst: config.disable_paste_burst,
+                xtreme_ui_enabled,
                 animations_enabled: config.animations,
                 skills: None,
             }),
@@ -1731,6 +1798,8 @@ impl ChatWidget {
             is_review_mode: false,
             pre_review_token_info: None,
             needs_final_message_separator: false,
+            turn_summary: history_cell::TurnSummary::default(),
+            session_stats: crate::status::SessionStats::default(),
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
@@ -1769,8 +1838,13 @@ impl ChatWidget {
         let model = session_configured.model.clone();
         let mut config = config;
         config.model = Some(model.clone());
+        let xtreme_ui_enabled = crate::xtreme::xtreme_ui_enabled(&config);
         let mut rng = rand::rng();
-        let placeholder = EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string();
+        let placeholder = if codex_core::config::is_xcodex_invocation() {
+            "Ask xcodex to do anything".to_string()
+        } else {
+            EXAMPLE_PROMPTS[rng.random_range(0..EXAMPLE_PROMPTS.len())].to_string()
+        };
 
         let codex_op_tx =
             spawn_agent_from_existing(conversation, session_configured, app_event_tx.clone());
@@ -1788,6 +1862,7 @@ impl ChatWidget {
                 enhanced_keys_supported,
                 placeholder_text: placeholder,
                 disable_paste_burst: config.disable_paste_burst,
+                xtreme_ui_enabled,
                 animations_enabled: config.animations,
                 skills: None,
             }),
@@ -1845,6 +1920,8 @@ impl ChatWidget {
             is_review_mode: false,
             pre_review_token_info: None,
             needs_final_message_separator: false,
+            turn_summary: history_cell::TurnSummary::default(),
+            session_stats: crate::status::SessionStats::default(),
             last_rendered_width: std::cell::Cell::new(None),
             feedback,
             current_rollout_path: None,
@@ -1944,6 +2021,7 @@ impl ChatWidget {
                 status_cell,
                 self.config.tui_status_bar_show_git_branch,
                 self.config.tui_status_bar_show_worktree,
+                self.config.tui_xtreme_mode,
                 self.config.tui_verbose_tool_output,
             );
             self.bottom_pane.show_view(Box::new(view));
@@ -1997,6 +2075,10 @@ impl ChatWidget {
         self.bottom_pane
             .attach_image(path, width, height, format_label);
         self.request_redraw();
+    }
+
+    pub(crate) fn dispatch_slash_command(&mut self, cmd: SlashCommand) {
+        self.dispatch_command(cmd);
     }
 
     fn dispatch_command(&mut self, cmd: SlashCommand) {
@@ -2116,6 +2198,7 @@ impl ChatWidget {
                     status_cell,
                     self.config.tui_status_bar_show_git_branch,
                     self.config.tui_status_bar_show_worktree,
+                    self.config.tui_xtreme_mode,
                     self.config.tui_verbose_tool_output,
                 );
                 self.bottom_pane.show_view(Box::new(view));
@@ -2129,6 +2212,7 @@ impl ChatWidget {
                     status_cell,
                     self.config.tui_status_bar_show_git_branch,
                     self.config.tui_status_bar_show_worktree,
+                    self.config.tui_xtreme_mode,
                     self.config.tui_verbose_tool_output,
                 );
                 self.bottom_pane.show_view(Box::new(view));
@@ -2142,6 +2226,21 @@ impl ChatWidget {
                     status_cell,
                     self.config.tui_status_bar_show_git_branch,
                     self.config.tui_status_bar_show_worktree,
+                    self.config.tui_xtreme_mode,
+                    self.config.tui_verbose_tool_output,
+                );
+                self.bottom_pane.show_view(Box::new(view));
+                self.request_redraw();
+            }
+            SlashCommand::Xtreme => {
+                let status_cell = self.status_menu_status_cell();
+                let view = crate::bottom_pane::StatusMenuView::new(
+                    crate::bottom_pane::StatusMenuTab::Tools,
+                    self.app_event_tx.clone(),
+                    status_cell,
+                    self.config.tui_status_bar_show_git_branch,
+                    self.config.tui_status_bar_show_worktree,
+                    self.config.tui_xtreme_mode,
                     self.config.tui_verbose_tool_output,
                 );
                 self.bottom_pane.show_view(Box::new(view));
@@ -2260,6 +2359,10 @@ impl ChatWidget {
     }
 
     fn queue_user_message(&mut self, user_message: UserMessage) {
+        // MCP startup warnings should not remain pinned once the user proceeds with any prompt.
+        if !(user_message.text.trim().is_empty() && user_message.image_paths.is_empty()) {
+            self.set_mcp_startup_banner(None);
+        }
         if self.bottom_pane.is_task_running() {
             self.queued_user_messages.push_back(user_message);
             self.refresh_queued_user_messages();
@@ -3474,55 +3577,26 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    pub(crate) fn add_status_output(&mut self) {
-        let default_usage = TokenUsage::default();
-        let token_info = self.token_info.as_ref();
-        let total_usage = token_info
-            .map(|ti| &ti.total_token_usage)
-            .unwrap_or(&default_usage);
-        self.add_to_history(crate::status::new_status_output(
-            &self.config,
-            self.auth_manager.as_ref(),
-            token_info,
-            total_usage,
-            &self.conversation_id,
-            self.rate_limit_snapshot.as_ref(),
-            self.plan_type,
-            Local::now(),
-            &self.model,
-        ));
-    }
-
     pub(crate) fn status_menu_status_cell(&self) -> Box<dyn HistoryCell> {
         let default_usage = TokenUsage::default();
         let token_info = self.token_info.as_ref();
         let total_usage = token_info
             .map(|ti| &ti.total_token_usage)
             .unwrap_or(&default_usage);
+        let session_stats = (!self.session_stats.is_empty()).then_some(&self.session_stats);
 
-        crate::status::new_status_menu_summary_card(
+        crate::status::new_status_menu_summary_card_with_session_stats(
             &self.config,
             self.auth_manager.as_ref(),
             token_info,
             total_usage,
             &self.conversation_id,
+            session_stats,
             self.rate_limit_snapshot.as_ref(),
             self.plan_type,
             Local::now(),
             &self.model,
         )
-    }
-
-    pub(crate) fn add_settings_output_with_values(
-        &mut self,
-        show_git_branch: bool,
-        show_worktree: bool,
-        verbose_tool_output: bool,
-    ) {
-        let command = PlainHistoryCell::new(vec![Line::from(vec!["/settings".magenta()])]);
-        let card =
-            crate::status::new_settings_card(show_git_branch, show_worktree, verbose_tool_output);
-        self.add_to_history(CompositeHistoryCell::new(vec![Box::new(command), card]));
     }
 
     pub(crate) fn add_help_topics_output(&mut self) {
@@ -5086,6 +5160,13 @@ impl ChatWidget {
 
     pub(crate) fn set_verbose_tool_output(&mut self, verbose: bool) {
         self.config.tui_verbose_tool_output = verbose;
+    }
+
+    pub(crate) fn set_xtreme_mode(&mut self, mode: codex_core::config::types::XtremeMode) {
+        self.config.tui_xtreme_mode = mode;
+        self.bottom_pane
+            .set_xtreme_ui_enabled(crate::xtreme::xtreme_ui_enabled(&self.config));
+        self.request_redraw();
     }
 
     /// Set the model in the widget's config copy.

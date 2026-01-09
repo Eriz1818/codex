@@ -1,12 +1,11 @@
 ---
 source: tui2/src/chatwidget/tests.rs
-assertion_line: 2549
 expression: terminal.backend()
 ---
 "                                                                                "
-"• Working (0s • esc to interrupt)                                               "
+"• Charging (0s • esc to interrupt)                                              "
 "                                                                                "
 "                                                                                "
-"› Ask xcodex to do anything                                                     "
+"⚡Ask xcodex to do anything                                                     " Hidden by multi-width symbols: [(1, " ")]
 "                                                                                "
 "  100% context left · ? for shortcuts                                           "
