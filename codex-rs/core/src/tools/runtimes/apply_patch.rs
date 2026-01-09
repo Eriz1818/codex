@@ -352,10 +352,13 @@ mod tests {
     #[test]
     fn apply_patch_in_process_avoids_absolute_paths_in_errors() {
         let dir = tempdir().expect("tempdir");
+        let missing_path = dir.path().join("missing.txt");
+        fs::write(&missing_path, "old\n").expect("seed file");
         let req = make_test_request(
             &dir,
             "*** Begin Patch\n*** Update File: missing.txt\n@@\n-old\n+new\n*** End Patch",
         );
+        fs::remove_file(&missing_path).expect("delete file after verification");
 
         let out = ApplyPatchRuntime::apply_patch_in_process(&req);
 

@@ -19,7 +19,7 @@ use codex_api::create_text_param_for_request;
 use codex_api::error::ApiError;
 use codex_api::requests::responses::Compression;
 use codex_app_server_protocol::AuthMode;
-use codex_otel::otel_manager::OtelManager;
+use codex_otel::OtelManager;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::models::ResponseItem;
@@ -160,11 +160,14 @@ impl ModelClient {
 
         let mut refreshed = false;
         loop {
-            let auth = auth_manager.as_ref().and_then(|m| m.auth());
+            let auth = match auth_manager.as_ref() {
+                Some(manager) => manager.auth().await,
+                None => None,
+            };
             let api_provider = self
                 .provider
                 .to_api_provider(auth.as_ref().map(|a| a.mode))?;
-            let api_auth = auth_provider_from_auth(auth.clone(), &self.provider).await?;
+            let api_auth = auth_provider_from_auth(auth.clone(), &self.provider)?;
             let transport = ReqwestTransport::new(build_reqwest_client());
             let (request_telemetry, sse_telemetry) = self.build_streaming_telemetry();
             let client = ApiChatClient::new(transport, api_provider, api_auth)
@@ -248,11 +251,14 @@ impl ModelClient {
 
         let mut refreshed = false;
         loop {
-            let auth = auth_manager.as_ref().and_then(|m| m.auth());
+            let auth = match auth_manager.as_ref() {
+                Some(manager) => manager.auth().await,
+                None => None,
+            };
             let api_provider = self
                 .provider
                 .to_api_provider(auth.as_ref().map(|a| a.mode))?;
-            let api_auth = auth_provider_from_auth(auth.clone(), &self.provider).await?;
+            let api_auth = auth_provider_from_auth(auth.clone(), &self.provider)?;
             let transport = ReqwestTransport::new(build_reqwest_client());
             let (request_telemetry, sse_telemetry) = self.build_streaming_telemetry();
             let compression = if self
@@ -347,11 +353,14 @@ impl ModelClient {
             return Ok(Vec::new());
         }
         let auth_manager = self.auth_manager.clone();
-        let auth = auth_manager.as_ref().and_then(|m| m.auth());
+        let auth = match auth_manager.as_ref() {
+            Some(manager) => manager.auth().await,
+            None => None,
+        };
         let api_provider = self
             .provider
             .to_api_provider(auth.as_ref().map(|a| a.mode))?;
-        let api_auth = auth_provider_from_auth(auth.clone(), &self.provider).await?;
+        let api_auth = auth_provider_from_auth(auth.clone(), &self.provider)?;
         let transport = ReqwestTransport::new(build_reqwest_client());
         let request_telemetry = self.build_request_telemetry();
         let client = ApiCompactClient::new(transport, api_provider, api_auth)

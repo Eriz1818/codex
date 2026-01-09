@@ -11,6 +11,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::Constrained;
 use codex_core::config::ConstraintError;
+use codex_core::config_loader::RequirementSource;
 use codex_core::features::Feature;
 use codex_core::models_manager::manager::ModelsManager;
 use codex_core::protocol::AgentMessageDeltaEvent;
@@ -84,6 +85,15 @@ async fn test_config() -> Config {
         .build()
         .await
         .expect("config")
+}
+
+fn invalid_value(candidate: impl Into<String>, allowed: impl Into<String>) -> ConstraintError {
+    ConstraintError::InvalidValue {
+        field_name: "<unknown>",
+        candidate: candidate.into(),
+        allowed: allowed.into(),
+        requirement_source: RequirementSource::Unknown,
+    }
 }
 
 fn snapshot(percent: f64) -> RateLimitSnapshot {
@@ -368,7 +378,7 @@ async fn make_chatwidget_manual(
         frame_requester: FrameRequester::test_dummy(),
         has_input_focus: true,
         enhanced_keys_supported: false,
-        placeholder_text: "Ask xCodex to do anything".to_string(),
+        placeholder_text: "Ask xcodex to do anything".to_string(),
         disable_paste_burst: false,
         animations_enabled: cfg.animations,
         skills: None,
@@ -2467,7 +2477,7 @@ async fn approvals_popup_shows_disabled_presets() {
     chat.config.approval_policy =
         Constrained::new(AskForApproval::OnRequest, |candidate| match candidate {
             AskForApproval::OnRequest => Ok(()),
-            _ => Err(ConstraintError::invalid_value(
+            _ => Err(invalid_value(
                 candidate.to_string(),
                 "this message should be printed in the description",
             )),
@@ -2503,10 +2513,7 @@ async fn approvals_popup_navigation_skips_disabled() {
     chat.config.approval_policy =
         Constrained::new(AskForApproval::OnRequest, |candidate| match candidate {
             AskForApproval::OnRequest => Ok(()),
-            _ => Err(ConstraintError::invalid_value(
-                candidate.to_string(),
-                "[on-request]",
-            )),
+            _ => Err(invalid_value(candidate.to_string(), "[on-request]")),
         })
         .expect("construct constrained approval policy");
     chat.open_approvals_popup();

@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use crate::AuthManager;
+use crate::CodexAuth;
 use crate::SandboxState;
 use crate::agent::AgentControl;
 use crate::agent::AgentStatus;
@@ -153,7 +154,7 @@ use crate::user_instructions::DeveloperInstructions;
 use crate::user_instructions::UserInstructions;
 use crate::util::backoff;
 use codex_async_utils::OrCancelExt;
-use codex_otel::otel_manager::OtelManager;
+use codex_otel::OtelManager;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
@@ -666,16 +667,31 @@ impl Session {
             });
         }
 
+        let auth = auth_manager.auth().await;
+        let auth = auth.as_ref();
         let otel_manager = OtelManager::new(
             conversation_id,
             session_configuration.model.as_str(),
             session_configuration.model.as_str(),
-            auth_manager.auth().and_then(|a| a.get_account_id()),
-            auth_manager.auth().and_then(|a| a.get_account_email()),
-            auth_manager.auth().map(|a| a.mode),
+            auth.and_then(CodexAuth::get_account_id),
+            auth.and_then(CodexAuth::get_account_email),
+            auth.map(|a| a.mode),
             config.otel.log_user_prompt,
             terminal::user_agent(),
             session_configuration.session_source.clone(),
+        );
+        config.features.emit_metrics(&otel_manager);
+        otel_manager.counter(
+            "codex.session.started",
+            1,
+            &[(
+                "is_git",
+                if get_git_repo_root(&session_configuration.cwd).is_some() {
+                    "true"
+                } else {
+                    "false"
+                },
+            )],
         );
 
         otel_manager.conversation_starts(
@@ -1343,12 +1359,10 @@ impl Session {
                     );
                 }
                 RolloutItem::Compacted(compacted) => {
-                    let snapshot = history.get_history();
-                    // TODO(jif) clean
                     if let Some(replacement) = &compacted.replacement_history {
                         history.replace(replacement.clone());
                     } else {
-                        let user_messages = collect_user_messages(&snapshot);
+                        let user_messages = collect_user_messages(history.raw_items());
                         let rebuilt = compact::build_compacted_history(
                             self.build_initial_context(turn_context),
                             &user_messages,
@@ -1363,7 +1377,7 @@ impl Session {
                 _ => {}
             }
         }
-        history.get_history()
+        history.raw_items().to_vec()
     }
 
     /// Append ResponseItems to the in-memory conversation history only.
@@ -1575,8 +1589,8 @@ impl Session {
         );
 
         let router = ToolRouter::from_config(&turn_context.tools_config, mcp_tools);
-        let mut history = self.clone_history().await;
-        let mut input = history.get_history_for_prompt();
+        let history = self.clone_history().await;
+        let mut input = history.for_prompt();
         input.extend(extra_items.into_iter().cloned());
         let prompt = Prompt {
             input,
@@ -1977,6 +1991,7 @@ mod handlers {
     use codex_protocol::protocol::TurnAbortReason;
     use codex_protocol::protocol::WarningEvent;
 
+    use crate::context_manager::is_user_turn_boundary;
     use codex_protocol::user_input::UserInput;
     use codex_rmcp_client::ElicitationAction;
     use codex_rmcp_client::ElicitationResponse;
@@ -2489,7 +2504,10 @@ mod handlers {
 
         let mut history = sess.clone_history().await;
         history.drop_last_n_user_turns(num_turns);
-        sess.replace_history(history.get_history()).await;
+
+        // Replace with the raw items. We don't want to replace with a normalized
+        // version of the history.
+        sess.replace_history(history.raw_items().to_vec()).await;
         sess.recompute_token_usage(turn_context.as_ref()).await;
 
         sess.send_event_raw_flushed(Event {
@@ -2516,6 +2534,17 @@ mod handlers {
             .terminate_all_processes()
             .await;
         info!("Shutting down Codex instance");
+        let history = sess.clone_history().await;
+        let turn_count = history
+            .raw_items()
+            .iter()
+            .filter(|item| is_user_turn_boundary(item))
+            .count();
+        sess.services.otel_manager.counter(
+            "conversation.turn.count",
+            i64::try_from(turn_count).unwrap_or(0),
+            &[],
+        );
 
         // Gracefully flush and shutdown rollout recorder on session end so tests
         // that inspect the rollout file do not race with the background writer.
@@ -2830,13 +2859,14 @@ pub(crate) async fn run_task(
             break;
         }
 
-        if !pending_input.is_empty() {
+        // Construct the input that we will send to the model.
+        let turn_input: Vec<ResponseItem> = if pending_input.is_empty() {
+            sess.clone_history().await.for_prompt()
+        } else {
             sess.record_conversation_items(&turn_context, &pending_input)
                 .await;
-        }
-
-        // Construct the input that we will send to the model.
-        let turn_input: Vec<ResponseItem> = sess.clone_history().await.get_history_for_prompt();
+            sess.clone_history().await.for_prompt()
+        };
 
         let turn_input_messages = turn_input
             .iter()
@@ -3341,6 +3371,7 @@ pub(super) fn get_last_assistant_message_from_turn(responses: &[ResponseItem]) -
 #[cfg(test)]
 pub(crate) use tests::make_session_and_context;
 
+use crate::git_info::get_git_repo_root;
 #[cfg(test)]
 pub(crate) use tests::make_session_and_context_with_rx;
 
@@ -3415,8 +3446,8 @@ mod tests {
             }))
             .await;
 
-        let actual = session.state.lock().await.clone_history().get_history();
-        assert_eq!(expected, actual);
+        let history = session.state.lock().await.clone_history();
+        assert_eq!(expected, history.raw_items());
     }
 
     #[tokio::test]
@@ -3511,8 +3542,8 @@ mod tests {
             .record_initial_history(InitialHistory::Forked(rollout_items))
             .await;
 
-        let actual = session.state.lock().await.clone_history().get_history();
-        assert_eq!(expected, actual);
+        let history = session.state.lock().await.clone_history();
+        assert_eq!(expected, history.raw_items());
     }
 
     #[tokio::test]
@@ -3568,8 +3599,8 @@ mod tests {
         expected.extend(initial_context);
         expected.extend(turn_1);
 
-        let actual = sess.clone_history().await.get_history();
-        assert_eq!(expected, actual);
+        let history = sess.clone_history().await;
+        assert_eq!(expected, history.raw_items());
     }
 
     #[tokio::test]
@@ -3594,8 +3625,8 @@ mod tests {
         let rollback_event = wait_for_thread_rolled_back(&rx).await;
         assert_eq!(rollback_event.num_turns, 99);
 
-        let actual = sess.clone_history().await.get_history();
-        assert_eq!(initial_context, actual);
+        let history = sess.clone_history().await;
+        assert_eq!(initial_context, history.raw_items());
     }
 
     #[tokio::test]
@@ -3615,8 +3646,8 @@ mod tests {
             Some(CodexErrorInfo::ThreadRollbackFailed)
         );
 
-        let actual = sess.clone_history().await.get_history();
-        assert_eq!(initial_context, actual);
+        let history = sess.clone_history().await;
+        assert_eq!(initial_context, history.raw_items());
     }
 
     #[tokio::test]
@@ -3636,8 +3667,8 @@ mod tests {
             Some(CodexErrorInfo::ThreadRollbackFailed)
         );
 
-        let actual = sess.clone_history().await.get_history();
-        assert_eq!(initial_context, actual);
+        let history = sess.clone_history().await;
+        assert_eq!(initial_context, history.raw_items());
     }
 
     #[tokio::test]
@@ -4148,8 +4179,8 @@ mod tests {
             .record_model_warning("too many unified exec processes", &turn_context)
             .await;
 
-        let mut history = session.clone_history().await;
-        let history_items = history.get_history();
+        let history = session.clone_history().await;
+        let history_items = history.raw_items();
         let last = history_items.last().expect("warning recorded");
 
         match last {
@@ -4295,8 +4326,9 @@ mod tests {
             }
         }
 
-        let history = sess.clone_history().await.get_history();
-        let _ = history;
+        // TODO(jif) investigate what is this?
+        let history = sess.clone_history().await;
+        let _ = history.raw_items();
     }
 
     #[tokio::test]
@@ -4385,7 +4417,7 @@ mod tests {
         rollout_items.push(RolloutItem::ResponseItem(assistant1.clone()));
 
         let summary1 = "summary one";
-        let snapshot1 = live_history.get_history();
+        let snapshot1 = live_history.clone().for_prompt();
         let user_messages1 = collect_user_messages(&snapshot1);
         let rebuilt1 = compact::build_compacted_history(
             session.build_initial_context(turn_context),
@@ -4419,7 +4451,7 @@ mod tests {
         rollout_items.push(RolloutItem::ResponseItem(assistant2.clone()));
 
         let summary2 = "summary two";
-        let snapshot2 = live_history.get_history();
+        let snapshot2 = live_history.clone().for_prompt();
         let user_messages2 = collect_user_messages(&snapshot2);
         let rebuilt2 = compact::build_compacted_history(
             session.build_initial_context(turn_context),
@@ -4452,7 +4484,7 @@ mod tests {
         live_history.record_items(std::iter::once(&assistant3), turn_context.truncation_policy);
         rollout_items.push(RolloutItem::ResponseItem(assistant3.clone()));
 
-        (rollout_items, live_history.get_history())
+        (rollout_items, live_history.for_prompt())
     }
 
     #[tokio::test]

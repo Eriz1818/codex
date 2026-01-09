@@ -22,7 +22,7 @@ use tokio::task::JoinError;
 pub type Result<T> = std::result::Result<T, CodexErr>;
 
 /// Limit UI error messages to a reasonable size while keeping useful context.
-const ERROR_MESSAGE_UI_MAX_BYTES: usize = 2 * 1024; // 4 KiB
+const ERROR_MESSAGE_UI_MAX_BYTES: usize = 2 * 1024; // 2 KiB
 
 #[derive(Error, Debug)]
 pub enum SandboxErr {
@@ -71,7 +71,7 @@ pub enum CodexErr {
     Stream(String, Option<Duration>),
 
     #[error(
-        "Codex ran out of room in the model's context window. Start a new thread or clear earlier history before retrying."
+        "Codex estimates this request would exceed the model's context window. Start a new thread or clear earlier history before retrying."
     )]
     ContextWindowExceeded,
 

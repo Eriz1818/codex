@@ -1,15 +1,14 @@
 ---
 source: tui/src/bottom_pane/unified_exec_footer.rs
-assertion_line: 125
 expression: "format!(\"{buf:?}\")"
 ---
 Buffer {
     area: Rect { x: 0, y: 0, width: 50, height: 1 },
     content: [
-        "  1 hook running · /ps to view                    ",
+        "  1 hook running · /hooks to view                 ",
     ],
     styles: [
         x: 0, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: DIM,
-        x: 30, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 33, y: 0, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
     ]
 }

@@ -116,24 +116,6 @@ impl UnifiedExecProcessManager {
             .clone()
             .unwrap_or_else(|| context.turn.cwd.clone());
 
-        let process = self
-            .open_session_with_sandbox(
-                &request.command,
-                cwd.clone(),
-                request.sandbox_permissions,
-                request.justification,
-                context,
-            )
-            .await;
-
-        let process = match process {
-            Ok(process) => Arc::new(process),
-            Err(err) => {
-                self.release_process_id(&request.process_id).await;
-                return Err(err);
-            }
-        };
-
         let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));
         let event_ctx = ToolEventCtx::new(
             context.session.as_ref(),
@@ -148,6 +130,38 @@ impl UnifiedExecProcessManager {
             Some(request.process_id.clone()),
         );
         emitter.emit(event_ctx, ToolEventStage::Begin).await;
+
+        let open_started_at = Instant::now();
+        let process = self
+            .open_session_with_sandbox(
+                &request.command,
+                cwd.clone(),
+                request.sandbox_permissions,
+                request.justification,
+                context,
+            )
+            .await;
+
+        let process = match process {
+            Ok(process) => Arc::new(process),
+            Err(err) => {
+                emit_exec_end_for_unified_exec(
+                    Arc::clone(&context.session),
+                    Arc::clone(&context.turn),
+                    context.call_id.clone(),
+                    request.command.clone(),
+                    cwd,
+                    Some(request.process_id.clone()),
+                    Arc::clone(&transcript),
+                    String::new(),
+                    -1,
+                    open_started_at.elapsed(),
+                )
+                .await;
+                self.release_process_id(&request.process_id).await;
+                return Err(err);
+            }
+        };
 
         start_streaming_output(&process, context, Arc::clone(&transcript));
 

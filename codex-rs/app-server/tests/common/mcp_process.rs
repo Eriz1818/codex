@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Stdio;
@@ -22,6 +21,7 @@ use codex_app_server_protocol::ConfigBatchWriteParams;
 use codex_app_server_protocol::ConfigReadParams;
 use codex_app_server_protocol::ConfigValueWriteParams;
 use codex_app_server_protocol::FeedbackUploadParams;
+use codex_app_server_protocol::ForkConversationParams;
 use codex_app_server_protocol::GetAccountParams;
 use codex_app_server_protocol::GetAuthStatusParams;
 use codex_app_server_protocol::InitializeParams;
@@ -44,7 +44,9 @@ use codex_app_server_protocol::SendUserTurnParams;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::SetDefaultModelParams;
 use codex_app_server_protocol::ThreadArchiveParams;
+use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadListParams;
+use codex_app_server_protocol::ThreadLoadedListParams;
 use codex_app_server_protocol::ThreadResumeParams;
 use codex_app_server_protocol::ThreadRollbackParams;
 use codex_app_server_protocol::ThreadStartParams;
@@ -61,10 +63,7 @@ pub struct McpProcess {
     process: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
-    in_flight_request_ids: HashSet<RequestId>,
-    pending_notifications: VecDeque<JSONRPCNotification>,
-    pending_responses: VecDeque<JSONRPCResponse>,
-    pending_errors: VecDeque<JSONRPCError>,
+    pending_messages: VecDeque<JSONRPCMessage>,
 }
 
 impl McpProcess {
@@ -131,10 +130,7 @@ impl McpProcess {
             process,
             stdin,
             stdout,
-            in_flight_request_ids: HashSet::new(),
-            pending_notifications: VecDeque::new(),
-            pending_responses: VecDeque::new(),
-            pending_errors: VecDeque::new(),
+            pending_messages: VecDeque::new(),
         })
     }
 
@@ -159,7 +155,6 @@ impl McpProcess {
                 response.id
             );
         }
-        self.mark_request_completed(&response.id, "response")?;
 
         // Send notifications/initialized to ack the response.
         self.send_notification(ClientNotification::Initialized)
@@ -316,6 +311,15 @@ impl McpProcess {
         self.send_request("thread/resume", params).await
     }
 
+    /// Send a `thread/fork` JSON-RPC request.
+    pub async fn send_thread_fork_request(
+        &mut self,
+        params: ThreadForkParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("thread/fork", params).await
+    }
+
     /// Send a `thread/archive` JSON-RPC request.
     pub async fn send_thread_archive_request(
         &mut self,
@@ -343,6 +347,15 @@ impl McpProcess {
         self.send_request("thread/list", params).await
     }
 
+    /// Send a `thread/loaded/list` JSON-RPC request.
+    pub async fn send_thread_loaded_list_request(
+        &mut self,
+        params: ThreadLoadedListParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("thread/loaded/list", params).await
+    }
+
     /// Send a `model/list` JSON-RPC request.
     pub async fn send_list_models_request(
         &mut self,
@@ -359,6 +372,15 @@ impl McpProcess {
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("resumeConversation", params).await
+    }
+
+    /// Send a `forkConversation` JSON-RPC request.
+    pub async fn send_fork_conversation_request(
+        &mut self,
+        params: ForkConversationParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("forkConversation", params).await
     }
 
     /// Send a `loginApiKey` JSON-RPC request.
@@ -497,11 +519,9 @@ impl McpProcess {
         params: Option<serde_json::Value>,
     ) -> anyhow::Result<i64> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-        let request_id_msg = RequestId::Integer(request_id);
-        self.in_flight_request_ids.insert(request_id_msg.clone());
 
         let message = JSONRPCMessage::Request(JSONRPCRequest {
-            id: request_id_msg,
+            id: RequestId::Integer(request_id),
             method: method.to_string(),
             params,
         });
@@ -554,23 +574,16 @@ impl McpProcess {
     pub async fn read_stream_until_request_message(&mut self) -> anyhow::Result<ServerRequest> {
         eprintln!("in read_stream_until_request_message()");
 
-        loop {
-            let message = self.read_jsonrpc_message().await?;
+        let message = self
+            .read_stream_until_message(|message| matches!(message, JSONRPCMessage::Request(_)))
+            .await?;
 
-            match message {
-                JSONRPCMessage::Notification(notification) => {
-                    eprintln!("notification: {notification:?}");
-                    self.enqueue_notification(notification);
-                }
-                JSONRPCMessage::Request(jsonrpc_request) => {
-                    return jsonrpc_request.try_into().with_context(
-                        || "failed to deserialize ServerRequest from JSONRPCRequest",
-                    );
-                }
-                JSONRPCMessage::Error(err) => self.enqueue_error(err)?,
-                JSONRPCMessage::Response(response) => self.enqueue_response(response)?,
-            }
-        }
+        let JSONRPCMessage::Request(jsonrpc_request) = message else {
+            unreachable!("expected JSONRPCMessage::Request, got {message:?}");
+        };
+        jsonrpc_request
+            .try_into()
+            .with_context(|| "failed to deserialize ServerRequest from JSONRPCRequest")
     }
 
     pub async fn read_stream_until_response_message(
@@ -579,91 +592,32 @@ impl McpProcess {
     ) -> anyhow::Result<JSONRPCResponse> {
         eprintln!("in read_stream_until_response_message({request_id:?})");
 
-        if let Some(err) = self
-            .pending_errors
-            .iter()
-            .find(|err| err.id == request_id)
-            .cloned()
-        {
-            anyhow::bail!(
-                "received JSON-RPC error while waiting for response {request_id:?}: {err:?}"
-            );
-        }
+        let message = self
+            .read_stream_until_message(|message| {
+                Self::message_request_id(message) == Some(&request_id)
+            })
+            .await?;
 
-        if let Some(response) = self.take_pending_response_by_id(&request_id) {
-            return Ok(response);
-        }
-
-        loop {
-            let message = self.read_jsonrpc_message().await?;
-            match message {
-                JSONRPCMessage::Notification(notification) => {
-                    eprintln!("notification: {notification:?}");
-                    self.enqueue_notification(notification);
-                }
-                JSONRPCMessage::Request(_) => {
-                    anyhow::bail!("unexpected JSONRPCMessage::Request: {message:?}");
-                }
-                JSONRPCMessage::Error(err) => {
-                    let err_id = err.id.clone();
-                    let err_debug = format!("{err:?}");
-                    self.enqueue_error(err)?;
-                    if err_id == request_id {
-                        anyhow::bail!(
-                            "received JSON-RPC error while waiting for response {request_id:?}: {err_debug}"
-                        );
-                    }
-                }
-                JSONRPCMessage::Response(jsonrpc_response) => {
-                    if jsonrpc_response.id == request_id {
-                        self.mark_request_completed(&jsonrpc_response.id, "response")?;
-                        return Ok(jsonrpc_response);
-                    }
-                    self.enqueue_response(jsonrpc_response)?;
-                }
-            }
-        }
+        let JSONRPCMessage::Response(response) = message else {
+            unreachable!("expected JSONRPCMessage::Response, got {message:?}");
+        };
+        Ok(response)
     }
 
     pub async fn read_stream_until_error_message(
         &mut self,
         request_id: RequestId,
     ) -> anyhow::Result<JSONRPCError> {
-        if let Some(response) = self
-            .pending_responses
-            .iter()
-            .find(|response| response.id == request_id)
-            .cloned()
-        {
-            anyhow::bail!(
-                "received JSON-RPC response while waiting for error {request_id:?}: {response:?}"
-            );
-        }
+        let message = self
+            .read_stream_until_message(|message| {
+                Self::message_request_id(message) == Some(&request_id)
+            })
+            .await?;
 
-        if let Some(err) = self.take_pending_error_by_id(&request_id) {
-            return Ok(err);
-        }
-
-        loop {
-            let message = self.read_jsonrpc_message().await?;
-            match message {
-                JSONRPCMessage::Notification(notification) => {
-                    eprintln!("notification: {notification:?}");
-                    self.enqueue_notification(notification);
-                }
-                JSONRPCMessage::Request(_) => {
-                    anyhow::bail!("unexpected JSONRPCMessage::Request: {message:?}");
-                }
-                JSONRPCMessage::Response(response) => self.enqueue_response(response)?,
-                JSONRPCMessage::Error(err) => {
-                    if err.id == request_id {
-                        self.mark_request_completed(&err.id, "error")?;
-                        return Ok(err);
-                    }
-                    self.enqueue_error(err)?;
-                }
-            }
-        }
+        let JSONRPCMessage::Error(err) = message else {
+            unreachable!("expected JSONRPCMessage::Error, got {message:?}");
+        };
+        Ok(err)
     }
 
     pub async fn read_stream_until_notification_message(
@@ -672,81 +626,64 @@ impl McpProcess {
     ) -> anyhow::Result<JSONRPCNotification> {
         eprintln!("in read_stream_until_notification_message({method})");
 
-        if let Some(notification) = self.take_pending_notification_by_method(method) {
-            return Ok(notification);
+        let message = self
+            .read_stream_until_message(|message| {
+                matches!(
+                    message,
+                    JSONRPCMessage::Notification(notification) if notification.method == method
+                )
+            })
+            .await?;
+
+        let JSONRPCMessage::Notification(notification) = message else {
+            unreachable!("expected JSONRPCMessage::Notification, got {message:?}");
+        };
+        Ok(notification)
+    }
+
+    /// Clears any buffered messages so future reads only consider new stream items.
+    ///
+    /// We call this when e.g. we want to validate against the next turn and no longer care about
+    /// messages buffered from the prior turn.
+    pub fn clear_message_buffer(&mut self) {
+        self.pending_messages.clear();
+    }
+
+    /// Reads the stream until a message matches `predicate`, buffering any non-matching messages
+    /// for later reads.
+    async fn read_stream_until_message<F>(&mut self, predicate: F) -> anyhow::Result<JSONRPCMessage>
+    where
+        F: Fn(&JSONRPCMessage) -> bool,
+    {
+        if let Some(message) = self.take_pending_message(&predicate) {
+            return Ok(message);
         }
 
         loop {
             let message = self.read_jsonrpc_message().await?;
-            match message {
-                JSONRPCMessage::Notification(notification) => {
-                    if notification.method == method {
-                        return Ok(notification);
-                    }
-                    self.enqueue_notification(notification);
-                }
-                JSONRPCMessage::Request(_) => {
-                    anyhow::bail!("unexpected JSONRPCMessage::Request: {message:?}");
-                }
-                JSONRPCMessage::Error(err) => self.enqueue_error(err)?,
-                JSONRPCMessage::Response(response) => self.enqueue_response(response)?,
+            if predicate(&message) {
+                return Ok(message);
             }
+            self.pending_messages.push_back(message);
         }
     }
 
-    fn take_pending_notification_by_method(&mut self, method: &str) -> Option<JSONRPCNotification> {
-        if let Some(pos) = self
-            .pending_notifications
-            .iter()
-            .position(|notification| notification.method == method)
-        {
-            return self.pending_notifications.remove(pos);
-        }
-        None
-    }
-
-    fn take_pending_response_by_id(&mut self, request_id: &RequestId) -> Option<JSONRPCResponse> {
-        if let Some(pos) = self
-            .pending_responses
-            .iter()
-            .position(|response| &response.id == request_id)
-        {
-            return self.pending_responses.remove(pos);
+    fn take_pending_message<F>(&mut self, predicate: &F) -> Option<JSONRPCMessage>
+    where
+        F: Fn(&JSONRPCMessage) -> bool,
+    {
+        if let Some(pos) = self.pending_messages.iter().position(predicate) {
+            return self.pending_messages.remove(pos);
         }
         None
     }
 
-    fn take_pending_error_by_id(&mut self, request_id: &RequestId) -> Option<JSONRPCError> {
-        if let Some(pos) = self
-            .pending_errors
-            .iter()
-            .position(|err| &err.id == request_id)
-        {
-            return self.pending_errors.remove(pos);
+    fn message_request_id(message: &JSONRPCMessage) -> Option<&RequestId> {
+        match message {
+            JSONRPCMessage::Request(request) => Some(&request.id),
+            JSONRPCMessage::Response(response) => Some(&response.id),
+            JSONRPCMessage::Error(err) => Some(&err.id),
+            JSONRPCMessage::Notification(_) => None,
         }
-        None
-    }
-
-    fn enqueue_notification(&mut self, notification: JSONRPCNotification) {
-        self.pending_notifications.push_back(notification);
-    }
-
-    fn enqueue_response(&mut self, response: JSONRPCResponse) -> anyhow::Result<()> {
-        self.mark_request_completed(&response.id, "response")?;
-        self.pending_responses.push_back(response);
-        Ok(())
-    }
-
-    fn enqueue_error(&mut self, err: JSONRPCError) -> anyhow::Result<()> {
-        self.mark_request_completed(&err.id, "error")?;
-        self.pending_errors.push_back(err);
-        Ok(())
-    }
-
-    fn mark_request_completed(&mut self, request_id: &RequestId, kind: &str) -> anyhow::Result<()> {
-        if self.in_flight_request_ids.remove(request_id) {
-            return Ok(());
-        }
-        anyhow::bail!("unexpected JSON-RPC {kind} for request id {request_id:?}");
     }
 }
