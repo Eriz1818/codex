@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::process::Stdio;
@@ -64,11 +65,17 @@ pub struct McpProcess {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     pending_messages: VecDeque<JSONRPCMessage>,
+    in_flight_request_ids: HashSet<RequestId>,
+    strict_request_ids: bool,
 }
 
 impl McpProcess {
     pub async fn new(codex_home: &Path) -> anyhow::Result<Self> {
         Self::new_with_env(codex_home, &[]).await
+    }
+
+    pub async fn new_strict(codex_home: &Path) -> anyhow::Result<Self> {
+        Self::new_with_env_impl(codex_home, &[], true).await
     }
 
     /// Creates a new MCP process, allowing tests to override or remove
@@ -79,6 +86,29 @@ impl McpProcess {
     pub async fn new_with_env(
         codex_home: &Path,
         env_overrides: &[(&str, Option<&str>)],
+    ) -> anyhow::Result<Self> {
+        Self::new_with_env_impl(codex_home, env_overrides, false).await
+    }
+
+    pub async fn new_with_env_strict(
+        codex_home: &Path,
+        env_overrides: &[(&str, Option<&str>)],
+    ) -> anyhow::Result<Self> {
+        Self::new_with_env_impl(codex_home, env_overrides, true).await
+    }
+
+    pub fn enable_strict_request_ids(&mut self) {
+        self.strict_request_ids = true;
+    }
+
+    pub fn disable_strict_request_ids(&mut self) {
+        self.strict_request_ids = false;
+    }
+
+    async fn new_with_env_impl(
+        codex_home: &Path,
+        env_overrides: &[(&str, Option<&str>)],
+        strict_request_ids: bool,
     ) -> anyhow::Result<Self> {
         let program = codex_utils_cargo_bin::cargo_bin("codex-app-server")
             .context("should find binary for codex-app-server")?;
@@ -131,6 +161,8 @@ impl McpProcess {
             stdin,
             stdout,
             pending_messages: VecDeque::new(),
+            in_flight_request_ids: HashSet::new(),
+            strict_request_ids,
         })
     }
 
@@ -155,6 +187,7 @@ impl McpProcess {
                 response.id
             );
         }
+        self.record_request_completed(&response.id, "response")?;
 
         // Send notifications/initialized to ack the response.
         self.send_notification(ClientNotification::Initialized)
@@ -519,6 +552,8 @@ impl McpProcess {
         params: Option<serde_json::Value>,
     ) -> anyhow::Result<i64> {
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        self.in_flight_request_ids
+            .insert(RequestId::Integer(request_id));
 
         let message = JSONRPCMessage::Request(JSONRPCRequest {
             id: RequestId::Integer(request_id),
@@ -661,6 +696,7 @@ impl McpProcess {
 
         loop {
             let message = self.read_jsonrpc_message().await?;
+            self.maybe_record_request_completed(&message)?;
             if predicate(&message) {
                 return Ok(message);
             }
@@ -685,5 +721,27 @@ impl McpProcess {
             JSONRPCMessage::Error(err) => Some(&err.id),
             JSONRPCMessage::Notification(_) => None,
         }
+    }
+
+    fn maybe_record_request_completed(&mut self, message: &JSONRPCMessage) -> anyhow::Result<()> {
+        match message {
+            JSONRPCMessage::Response(response) => {
+                self.record_request_completed(&response.id, "response")
+            }
+            JSONRPCMessage::Error(err) => self.record_request_completed(&err.id, "error"),
+            JSONRPCMessage::Request(_) | JSONRPCMessage::Notification(_) => Ok(()),
+        }
+    }
+
+    fn record_request_completed(
+        &mut self,
+        request_id: &RequestId,
+        kind: &str,
+    ) -> anyhow::Result<()> {
+        if self.in_flight_request_ids.remove(request_id) || !self.strict_request_ids {
+            return Ok(());
+        }
+
+        anyhow::bail!("unexpected JSON-RPC {kind} for request id {request_id:?}");
     }
 }
