@@ -708,7 +708,7 @@ async fn list_git_untracked_entries_under(
 ) -> Result<Vec<String>, String> {
     let spec = pathspec.to_string_lossy();
 
-    let mut args = vec!["ls-files", "--others", "--exclude-standard", "--directory"];
+    let mut args = vec!["ls-files", "--others", "--exclude-standard"];
     if include_ignored {
         args.push("--ignored");
     }
@@ -935,28 +935,30 @@ async fn link_one_shared_dir(
                 }
             }
 
-            match dir_is_empty(&link_path) {
-                Ok(true) => {}
-                Ok(false) => {
-                    let reason = if migrate_untracked {
-                        "Directory is not empty; refusing to replace it with a link after migration."
-                    } else {
-                        "Directory is not empty; run `/worktree link-shared` to migrate+link, or migrate manually."
-                    };
-                    return SharedDirLinkAction {
-                        shared_dir: shared_dir.to_string(),
-                        link_path,
-                        target_path,
-                        outcome: SharedDirLinkOutcome::Skipped(String::from(reason)),
-                    };
-                }
-                Err(err) => {
-                    return SharedDirLinkAction {
-                        shared_dir: shared_dir.to_string(),
-                        link_path,
-                        target_path,
-                        outcome: SharedDirLinkOutcome::Failed(err),
-                    };
+            if path_entry_exists(&link_path) {
+                match dir_is_empty(&link_path) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        let reason = if migrate_untracked {
+                            "Directory is not empty; refusing to replace it with a link after migration."
+                        } else {
+                            "Directory is not empty; run `/worktree link-shared` to migrate+link, or migrate manually."
+                        };
+                        return SharedDirLinkAction {
+                            shared_dir: shared_dir.to_string(),
+                            link_path,
+                            target_path,
+                            outcome: SharedDirLinkOutcome::Skipped(String::from(reason)),
+                        };
+                    }
+                    Err(err) => {
+                        return SharedDirLinkAction {
+                            shared_dir: shared_dir.to_string(),
+                            link_path,
+                            target_path,
+                            outcome: SharedDirLinkOutcome::Failed(err),
+                        };
+                    }
                 }
             }
         } else {
@@ -970,15 +972,16 @@ async fn link_one_shared_dir(
             };
         }
 
-        if !removed_for_replace {
-            if let Err(err) = remove_if_exists(&link_path) {
-                return SharedDirLinkAction {
-                    shared_dir: shared_dir.to_string(),
-                    link_path,
-                    target_path,
-                    outcome: SharedDirLinkOutcome::Failed(err),
-                };
-            }
+        if !removed_for_replace
+            && path_entry_exists(&link_path)
+            && let Err(err) = remove_if_exists(&link_path)
+        {
+            return SharedDirLinkAction {
+                shared_dir: shared_dir.to_string(),
+                link_path,
+                target_path,
+                outcome: SharedDirLinkOutcome::Failed(err),
+            };
         }
     } else if let Some(parent) = link_path.parent()
         && let Err(err) = std::fs::create_dir_all(parent)
@@ -1065,6 +1068,150 @@ pub async fn link_worktree_shared_dirs_migrating_untracked(
     results
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitExcludeUpdate {
+    pub path: PathBuf,
+    pub added: Vec<String>,
+}
+
+fn normalize_git_ignore_path_pattern(path: &str) -> Option<String> {
+    let trimmed = path.trim().trim_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn resolve_git_common_dir_for_repo(cwd: &Path) -> Result<PathBuf, String> {
+    let base = if cwd.is_dir() {
+        cwd
+    } else {
+        cwd.parent()
+            .ok_or_else(|| String::from("Cannot resolve git common dir: cwd has no parent"))?
+    };
+
+    let git_dir_out = std::process::Command::new("git")
+        .args(["rev-parse", "--git-common-dir"])
+        .current_dir(base)
+        .output()
+        .map_err(|err| format!("Failed to run `git rev-parse --git-common-dir`: {err}"))?;
+    if !git_dir_out.status.success() {
+        return Err(String::from(
+            "`git rev-parse --git-common-dir` failed to resolve common git dir",
+        ));
+    }
+
+    let git_dir_s = String::from_utf8(git_dir_out.stdout)
+        .map_err(|err| format!("Invalid UTF-8 from `git rev-parse --git-common-dir`: {err}"))?;
+    let git_dir_s = git_dir_s.trim();
+    if git_dir_s.is_empty() {
+        return Err(String::from(
+            "`git rev-parse --git-common-dir` returned an empty path",
+        ));
+    }
+
+    let git_dir_path_raw = resolve_path(base, &PathBuf::from(git_dir_s));
+    Ok(std::fs::canonicalize(&git_dir_path_raw).unwrap_or(git_dir_path_raw))
+}
+
+pub fn maybe_add_shared_dirs_to_git_info_exclude(
+    workspace_root: &Path,
+    shared_dirs: &[String],
+) -> Result<GitExcludeUpdate, String> {
+    let git_common_dir = resolve_git_common_dir_for_repo(workspace_root)?;
+    let exclude_path = git_common_dir.join("info").join("exclude");
+
+    let desired_patterns: Vec<String> = shared_dirs
+        .iter()
+        .filter_map(|dir| normalize_git_ignore_path_pattern(dir))
+        .collect();
+    if desired_patterns.is_empty() {
+        return Ok(GitExcludeUpdate {
+            path: exclude_path,
+            added: Vec::new(),
+        });
+    }
+
+    let existing = std::fs::read_to_string(&exclude_path).unwrap_or_default();
+    let mut existing_lines: Vec<String> = existing.lines().map(str::to_string).collect();
+
+    const START_MARKER: &str = "# xcodex: worktrees.shared_dirs";
+    const END_MARKER: &str = "# end xcodex: worktrees.shared_dirs";
+
+    let start = existing_lines
+        .iter()
+        .position(|line| line.trim() == START_MARKER);
+    let end = start.and_then(|start| {
+        existing_lines[start + 1..]
+            .iter()
+            .position(|line| line.trim() == END_MARKER)
+            .map(|idx| start + 1 + idx)
+    });
+
+    let mut prior_patterns: HashSet<String> = HashSet::new();
+    if let (Some(start), Some(end)) = (start, end) {
+        for line in existing_lines[start + 1..end].iter() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            prior_patterns.insert(trimmed.to_string());
+        }
+    } else {
+        for line in existing_lines.iter() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            prior_patterns.insert(trimmed.to_string());
+        }
+    }
+
+    let added: Vec<String> = desired_patterns
+        .iter()
+        .filter(|pattern| !prior_patterns.contains(pattern.as_str()))
+        .cloned()
+        .collect();
+
+    let mut block: Vec<String> = Vec::new();
+    block.push(String::from(START_MARKER));
+    block.push(String::from(
+        "# Shared dirs persist across worktrees; ignore them to keep `git status` clean.",
+    ));
+    for pattern in &desired_patterns {
+        block.push(pattern.clone());
+    }
+    block.push(String::from(END_MARKER));
+
+    match (start, end) {
+        (Some(start), Some(end)) => {
+            existing_lines.splice(start..=end, block);
+        }
+        _ => {
+            if !existing_lines.is_empty() && existing_lines.last().is_some_and(|l| !l.is_empty()) {
+                existing_lines.push(String::new());
+            }
+            existing_lines.extend(block);
+        }
+    }
+
+    if let Some(parent) = exclude_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create {}: {err}", parent.display()))?;
+    }
+
+    let next = existing_lines.join("\n") + "\n";
+    if next != existing {
+        std::fs::write(&exclude_path, next)
+            .map_err(|err| format!("Failed to write {}: {err}", exclude_path.display()))?;
+    }
+
+    Ok(GitExcludeUpdate {
+        path: exclude_path,
+        added,
+    })
+}
+
 pub async fn worktree_doctor_lines(
     cwd: &Path,
     shared_dirs: &[String],
@@ -1079,30 +1226,49 @@ pub async fn worktree_doctor_lines(
 
     let mut lines: Vec<String> = Vec::new();
     lines.push(String::from("worktree doctor"));
-    lines.push(format!("active worktree: {}", worktree_root.display()));
+    lines.push(String::from("active worktree:"));
+    lines.push(format!("  {}", worktree_root.display()));
+    lines.push(String::from("workspace root:"));
     if let Some(root) = &workspace_root {
-        lines.push(format!("workspace root: {}", root.display()));
+        lines.push(format!("  {}", root.display()));
     } else {
-        lines.push(String::from("workspace root: (unknown)"));
+        lines.push(String::from("  (unknown)"));
     }
+    lines.push(String::from(""));
 
     if shared_dirs.is_empty() {
         lines.push(String::from("shared dirs: (none configured)"));
+        lines.push(String::from(""));
+        lines.push(String::from("Next steps:"));
         lines.push(String::from(
-            "Tip: add shared dirs via `/worktree shared add <dir>`, then run `/worktree link-shared`.",
+            "- Add shared dirs via `/worktree shared add <dir>`, then run:",
         ));
+        lines.push(String::from("  /worktree link-shared"));
         return lines;
     }
 
-    lines.push(format!("shared dirs: {}", shared_dirs.join(", ")));
+    lines.push(format!("shared dirs ({}):", shared_dirs.len()));
+    for shared_dir in shared_dirs {
+        lines.push(format!("- {shared_dir}"));
+    }
+    lines.push(String::from(""));
 
     let Some(workspace_root) = workspace_root else {
         lines.push(String::from(
             "Cannot resolve workspace root; skipping shared-dir checks.",
         ));
+        lines.push(String::from(""));
+        lines.push(String::from("Next steps:"));
+        lines.push(String::from(
+            "- Try running xcodex from the repo’s main worktree directory.",
+        ));
         return lines;
     };
 
+    let mut any_needs_link = false;
+    let mut any_untracked = false;
+
+    lines.push(String::from("shared dir status:"));
     for shared_dir in shared_dirs {
         let pathspec = match validate_repo_relative_dir(shared_dir) {
             Ok(pathspec) => pathspec,
@@ -1159,6 +1325,7 @@ pub async fn worktree_doctor_lines(
             && summary.total > 0
             && !summary.sample.is_empty()
         {
+            any_untracked = true;
             for sample in summary.sample.into_iter().take(3) {
                 lines.push(format!("    - {sample}"));
             }
@@ -1168,6 +1335,7 @@ pub async fn worktree_doctor_lines(
         }
 
         if !linked {
+            any_needs_link = true;
             if path_entry_exists(&link_path) {
                 if tracked == Some(true) {
                     lines.push(String::from(
@@ -1188,19 +1356,30 @@ pub async fn worktree_doctor_lines(
         }
     }
 
+    lines.push(String::from(""));
     lines.push(String::from("Next steps:"));
+    if !any_needs_link && !any_untracked {
+        lines.push(String::from("- Shared dirs look good; no action required."));
+    } else {
+        lines.push(String::from(
+            "- Run `/worktree link-shared` to apply links for configured shared dirs.",
+        ));
+        if any_untracked {
+            lines.push(String::from(
+                "- If a shared dir has existing content, rerun `/worktree link-shared` and choose:",
+            ));
+            lines.push(String::from("  - migrate+link (recommended), or"));
+            lines.push(String::from("  - replace+link (destructive)."));
+        }
+    }
     lines.push(String::from(
-        "- Run `/worktree link-shared` to apply links for configured shared dirs.",
+        "- To apply shared-dir links automatically on switch, enable:",
     ));
+    lines.push(String::from("  worktrees.auto_link_shared_dirs = true"));
     lines.push(String::from(
-        "- If a shared dir is refused due to non-empty content, rerun `/worktree link-shared` and choose migrate+link (or replace+link), or migrate files into the workspace root first, then retry.",
+        "- If you created worktrees outside xcodex, run:",
     ));
-    lines.push(String::from(
-        "- If you want shared-dir links applied automatically on switch, enable `worktrees.auto_link_shared_dirs = true`.",
-    ));
-    lines.push(String::from(
-        "- If you created worktrees outside xcodex, run `/worktree detect` to refresh the picker list.",
-    ));
+    lines.push(String::from("  /worktree detect"));
 
     lines
 }
