@@ -1,8 +1,14 @@
-# Announcement tips for the xCodex TUI.
+# Announcement tips for Codex/xCodex TUI.
 # Each [[announcements]] entry is evaluated in order; the last matching one is shown.
 # Dates are UTC, formatted as YYYY-MM-DD. `from_date` is inclusive and `to_date` is exclusive.
 # `version_regex` matches against the CLI version (env!("CARGO_PKG_VERSION")); omit to apply to all versions.
-# `target_app` selects which app should display the announcement (currently "cli").
+# `target_app` specifies which app should display the announcement (cli, vsce, ...).
+
+[[announcements]]
+content = "Welcome to Codex! Check out the new onboarding flow."
+from_date = "2024-10-01"
+to_date = "2024-10-15"
+target_app = "cli"
 
 [[announcements]]
 # Short-lived announcement for the current fork release.
@@ -14,7 +20,6 @@ target_app = "cli"
 
 [[announcements]]
 # Example entry that should never match (kept as a reference).
-content = "This is a test announcement (should not display)."
+content = "This is a test announcement"
 version_regex = "^0\\.0\\.0$"
 to_date = "2026-01-10"
-target_app = "cli"
