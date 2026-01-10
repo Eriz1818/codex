@@ -6,6 +6,6 @@ expression: terminal.backend()
 "• Charging (0s • esc to interrupt)                                              "
 "                                                                                "
 "                                                                                "
-"⚡Ask xcodex to do anything                                                     " Hidden by multi-width symbols: [(1, " ")]
+"› Ask xcodex to do anything                                                     "
 "                                                                                "
 "  100% context left · ? for shortcuts                                           "

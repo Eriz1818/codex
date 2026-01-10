@@ -1236,13 +1236,17 @@ impl HistoryCell for SessionHeaderHistoryCell {
             Span::from(format!("(v{})", self.version)).dim(),
         ]);
 
-        let power_spans =
-            xtreme::power_meter_spans(self.xtreme_ui_enabled, self.approval, &self.sandbox);
-
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
         const DIR_LABEL: &str = "directory:";
         let label_width = DIR_LABEL.len();
+
+        let power_spans = xtreme::power_meter_spans(
+            self.xtreme_ui_enabled,
+            self.approval,
+            &self.sandbox,
+            label_width,
+        );
         let model_label = format!(
             "{model_label:<label_width$}",
             model_label = "model:",

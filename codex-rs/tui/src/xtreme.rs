@@ -15,7 +15,7 @@ pub(crate) fn xtreme_ui_enabled(config: &Config) -> bool {
 
 pub(crate) fn title_prefix_spans(xtreme_ui_enabled: bool) -> Vec<Span<'static>> {
     if xtreme_ui_enabled {
-        vec![bolt_span(xtreme_ui_enabled), " ".into()]
+        vec![bolt_span(xtreme_ui_enabled)]
     } else {
         vec![">_ ".into()]
     }
@@ -49,6 +49,25 @@ pub(crate) fn power_meter_spans(
     xtreme_ui_enabled: bool,
     approval: AskForApproval,
     sandbox: &SandboxPolicy,
+    label_width: usize,
+) -> Option<Vec<Span<'static>>> {
+    let value_spans = power_meter_value_spans(xtreme_ui_enabled, approval, sandbox)?;
+
+    let label = format!(
+        "{label:<label_width$}",
+        label = "power:",
+        label_width = label_width
+    );
+    let mut spans: Vec<Span<'static>> = vec![Span::from(format!("{label} ")).dim()];
+    spans.extend(value_spans);
+
+    Some(spans)
+}
+
+pub(crate) fn power_meter_value_spans(
+    xtreme_ui_enabled: bool,
+    approval: AskForApproval,
+    sandbox: &SandboxPolicy,
 ) -> Option<Vec<Span<'static>>> {
     if !xtreme_ui_enabled {
         return None;
@@ -57,7 +76,7 @@ pub(crate) fn power_meter_spans(
     let score = approval_score(approval).min(sandbox_score(sandbox));
     let filled = usize::from(score.min(3));
 
-    let mut spans: Vec<Span<'static>> = vec!["power:".dim(), " ".into()];
+    let mut spans: Vec<Span<'static>> = Vec::new();
     for idx in 0..3 {
         spans.push(if idx < filled {
             bolt_span(true)

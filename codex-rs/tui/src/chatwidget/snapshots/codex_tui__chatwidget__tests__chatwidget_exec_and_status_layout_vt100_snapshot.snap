@@ -39,6 +39,6 @@ expression: term.backend().vt100().screen().contents()
 • Charging (0s • esc to interrupt)
 
 
-⚡Summarize recent commits
+› Summarize recent commits
 
   100% context left

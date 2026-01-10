@@ -2029,11 +2029,7 @@ impl Renderable for ChatComposer {
         let style = user_message_style();
         Block::default().style(style).render_ref(composer_rect, buf);
         if !textarea_rect.is_empty() {
-            let prefix = if self.xtreme_ui_enabled {
-                crate::xtreme::bolt_span(true)
-            } else {
-                "›".bold()
-            };
+            let prefix = "›".bold();
             buf.set_span(
                 textarea_rect.x - LIVE_PREFIX_COLS,
                 textarea_rect.y,

@@ -1,19 +1,17 @@
 ---
 source: tui/src/status/tests.rs
-assertion_line: 958
 expression: rendered_lines
 ---
 /status
 
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│  ⚡ xtreme-Codex (v0.1.0)                                                    │
-│                                                                              │
-│  power: ⚡⚡⚡                                                               │
+│  ⚡xtreme-Codex (v0.1.0)                                                     │
 │                                                                              │
 │ Visit https://chatgpt.com/codex/settings/usage for up-to-date                │
 │ information on rate limits and credits                                       │
 │                                                                              │
 │  UI:               tui                                                       │
+│  Power:            ⚡⚡⚡                                                    │
 │  Model:            gpt-5.1-codex-max (reasoning none, summaries auto)        │
 │  Directory: [[workspace]]                                                    │
 │  CODEX_HOME: [[codex_home]]                                                    │

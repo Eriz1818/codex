@@ -747,17 +747,6 @@ impl HistoryCell for StatusHistoryCell {
         lines.push(Line::from(title_spans));
         lines.push(Line::from(Vec::<Span<'static>>::new()));
 
-        if let Some(mut spans) = xtreme::power_meter_spans(
-            self.xtreme_ui_enabled,
-            self.approval_policy,
-            &self.sandbox_policy,
-        ) {
-            let mut row = vec![FieldFormatter::INDENT.dim()];
-            row.append(&mut spans);
-            lines.push(Line::from(row));
-            lines.push(Line::from(Vec::<Span<'static>>::new()));
-        }
-
         let available_inner_width = usize::from(width.saturating_sub(4));
         if available_inner_width == 0 {
             return Vec::new();
@@ -774,6 +763,12 @@ impl HistoryCell for StatusHistoryCell {
                 "API key configured (run xcodex login to use ChatGPT)".to_string()
             }
         });
+
+        let power_spans = xtreme::power_meter_value_spans(
+            self.xtreme_ui_enabled,
+            self.approval_policy,
+            &self.sandbox_policy,
+        );
 
         let mut labels: Vec<String> = vec![
             "UI",
@@ -793,6 +788,9 @@ impl HistoryCell for StatusHistoryCell {
 
         if account_value.is_some() {
             push_label(&mut labels, &mut seen, "Account");
+        }
+        if power_spans.is_some() {
+            push_label(&mut labels, &mut seen, "Power");
         }
         if self.session_id.is_some() {
             push_label(&mut labels, &mut seen, "Session");
@@ -838,6 +836,9 @@ impl HistoryCell for StatusHistoryCell {
         let codex_home_value = format_directory_display(&self.codex_home, Some(value_width));
 
         lines.push(formatter.line("UI", vec![Span::from(self.ui_frontend.clone())]));
+        if let Some(spans) = power_spans {
+            lines.push(formatter.line("Power", spans));
+        }
         lines.push(formatter.line("Model", model_spans));
         lines.push(formatter.line("Directory", vec![Span::from(directory_value)]));
         lines.push(formatter.line("CODEX_HOME", vec![Span::from(codex_home_value)]));
