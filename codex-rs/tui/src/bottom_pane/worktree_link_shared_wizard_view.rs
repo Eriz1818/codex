@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::path::PathBuf;
 
 use crossterm::event::KeyCode;
@@ -76,6 +77,7 @@ pub(crate) struct WorktreeLinkSharedWizardView {
     workspace_root: PathBuf,
     invoked_from: String,
     show_notice: bool,
+    ignore_shared_dirs_in_git: bool,
     step: Step,
     complete: bool,
     state: ScrollState,
@@ -110,6 +112,7 @@ impl WorktreeLinkSharedWizardView {
             workspace_root,
             invoked_from,
             show_notice,
+            ignore_shared_dirs_in_git: true,
             step: Step::SelectActions,
             complete: false,
             state: ScrollState::new(),
@@ -120,7 +123,7 @@ impl WorktreeLinkSharedWizardView {
         view
     }
 
-    fn header(&self) -> ColumnRenderable {
+    fn header(&self) -> ColumnRenderable<'_> {
         let mut header = ColumnRenderable::new();
         header.push(Line::from("Worktree link-shared".bold()));
         header.push(Line::from(vec![
@@ -172,11 +175,16 @@ impl WorktreeLinkSharedWizardView {
         }
     }
 
+    fn toggle_ignore_shared_dirs_in_git(&mut self) {
+        self.ignore_shared_dirs_in_git = !self.ignore_shared_dirs_in_git;
+    }
+
     fn apply(&mut self) {
         let worktree_root = self.worktree_root.clone();
         let workspace_root = self.workspace_root.clone();
         let invoked_from = self.invoked_from.clone();
         let show_notice = self.show_notice;
+        let ignore_shared_dirs_in_git = self.ignore_shared_dirs_in_git;
         let plans = self.plans.clone();
         let tx = self.app_event_tx.clone();
 
@@ -192,6 +200,38 @@ impl WorktreeLinkSharedWizardView {
                 worktree_root.display().to_string().into(),
             ]));
             lines.push(Line::from(""));
+
+            if ignore_shared_dirs_in_git {
+                let dirs_to_ignore: Vec<String> = plans
+                    .iter()
+                    .filter(|plan| plan.action != PlannedAction::Skip)
+                    .map(|plan| plan.dir.clone())
+                    .collect();
+                if !dirs_to_ignore.is_empty() {
+                    match codex_core::git_info::maybe_add_shared_dirs_to_git_info_exclude(
+                        &workspace_root,
+                        &dirs_to_ignore,
+                    ) {
+                        Ok(update) => {
+                            if !update.added.is_empty() {
+                                lines.push(Line::from(vec![
+                                    "Updated ".dim(),
+                                    update.path.display().to_string().cyan(),
+                                    " to ignore shared dirs.".dim(),
+                                ]));
+                                lines.push(Line::from(""));
+                            }
+                        }
+                        Err(err) => {
+                            lines.push(Line::from(vec![
+                                "Warning: ".dim(),
+                                format!("failed to update .git/info/exclude: {err}").dim(),
+                            ]));
+                            lines.push(Line::from(""));
+                        }
+                    }
+                }
+            }
 
             for plan in plans {
                 if plan.action == PlannedAction::Skip {
@@ -297,7 +337,7 @@ impl WorktreeLinkSharedWizardView {
     }
 }
 
-fn default_action_for_dir(worktree_root: &PathBuf, shared_dir: &str) -> PlannedAction {
+fn default_action_for_dir(worktree_root: &Path, shared_dir: &str) -> PlannedAction {
     let path = worktree_root.join(shared_dir);
     let Ok(md) = std::fs::symlink_metadata(&path) else {
         return PlannedAction::Link;
@@ -346,6 +386,11 @@ impl BottomPaneView for WorktreeLinkSharedWizardView {
                 KeyEvent {
                     code: KeyCode::Esc, ..
                 } => self.go_back(),
+                KeyEvent {
+                    code: KeyCode::Char('i') | KeyCode::Char('I'),
+                    modifiers: KeyModifiers::NONE,
+                    ..
+                } => self.toggle_ignore_shared_dirs_in_git(),
                 KeyEvent {
                     code: KeyCode::Enter,
                     modifiers: KeyModifiers::NONE,
@@ -438,6 +483,24 @@ impl Renderable for WorktreeLinkSharedWizardView {
                         plan.dir
                     )));
                 }
+                lines.push(Line::from(""));
+                lines.push(Line::from("Options:".bold()));
+                lines.push(Line::from(vec![
+                    if self.ignore_shared_dirs_in_git {
+                        "[x] ".green()
+                    } else {
+                        "[ ] ".dim()
+                    },
+                    "Add shared dirs to ".into(),
+                    ".git/info/exclude".cyan(),
+                    " (recommended)".dim(),
+                ]));
+                lines.push(Line::from(vec![
+                    "    ".into(),
+                    "Why: shared dirs are scratch space; ignoring them keeps ".dim(),
+                    "git status".cyan(),
+                    " clean across worktrees.".dim(),
+                ]));
                 Paragraph::new(lines).render(body_area, buf);
             }
         }
@@ -445,6 +508,8 @@ impl Renderable for WorktreeLinkSharedWizardView {
         Paragraph::new(Line::from(vec![
             "Enter".cyan(),
             " = Apply, ".dim(),
+            "I".cyan(),
+            " = Toggle ignore, ".dim(),
             "Esc".cyan(),
             " = Back".dim(),
         ]))
