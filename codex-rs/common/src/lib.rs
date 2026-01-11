@@ -39,3 +39,5 @@ pub mod approval_presets;
 pub mod oss;
 // Shared hook SDK installer used by CLI + TUI/TUI2.
 pub mod hooks_sdk_install;
+// Shared sample installer used by CLI + TUI/TUI2.
+pub mod hooks_samples_install;
