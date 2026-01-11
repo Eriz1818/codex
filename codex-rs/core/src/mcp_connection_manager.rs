@@ -14,8 +14,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::hooks::UserHooks;
 use crate::mcp::auth::McpAuthStatusEntry;
-use crate::user_notification::UserHooks;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;

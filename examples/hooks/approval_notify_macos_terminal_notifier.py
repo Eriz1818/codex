@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
+"""
+Example hook: show a macOS notification when xcodex asks for approval.
+"""
 import json
 import os
-import pathlib
 import shutil
 import subprocess
-import sys
 
-
-def read_payload() -> dict:
-    raw = sys.stdin.read() or "{}"
-    payload = json.loads(raw)
-    payload_path = payload.get("payload-path")
-    if payload_path:
-        payload = json.loads(pathlib.Path(payload_path).read_text())
-    return payload
-
+import xcodex_hooks
 
 def main() -> int:
-    payload = read_payload()
+    payload = xcodex_hooks.read_payload()
     if payload.get("type") != "approval-requested":
         return 0
 
@@ -36,4 +29,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

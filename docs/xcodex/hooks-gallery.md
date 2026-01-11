@@ -33,6 +33,15 @@ approval_requested = [["python3", "/absolute/path/to/log_all_jsonl.py"]]
 
 Output: appends JSON to `$CODEX_HOME/hooks.jsonl`.
 
+xcodex also ships an in-process equivalent (no external process spawn):
+
+```toml
+[hooks]
+inproc = ["event_log_jsonl"]
+```
+
+Note: `hooks.jsonl` is not automatically rotated or pruned; manage it externally if you enable this long-term.
+
 ### 2) Log compact tool call summaries
 
 Use: get a quick “timeline” of what Codex did without storing full payloads.
@@ -87,4 +96,3 @@ approval_requested = [["python3", "/absolute/path/to/notify_linux_notify_send.py
 - Treat hook payloads/logs as potentially sensitive.
 - Hooks run “fire-and-forget”; failures are logged and do not block the session.
 - Hook commands are argv arrays (no shell expansion), so use absolute paths.
-

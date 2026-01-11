@@ -96,7 +96,7 @@ impl ModelClient {
         }
     }
 
-    /// Returns the effective model context window used for display and local gating.
+    /// Returns the effective model context window used for local gating.
     ///
     /// Reserves headroom via `ModelFamily::effective_context_window_percent`.
     pub fn get_model_context_window(&self) -> Option<i64> {

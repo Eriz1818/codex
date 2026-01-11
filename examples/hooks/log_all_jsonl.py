@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
+"""
+Example hook: append every hook payload to CODEX_HOME/hooks.jsonl (one JSON object per line).
+
+This is useful for auditing/debugging, but treat payloads as sensitive.
+"""
 import json
 import os
 import pathlib
-import sys
 
-
-def read_payload() -> dict:
-    raw = sys.stdin.read() or "{}"
-    payload = json.loads(raw)
-    payload_path = payload.get("payload-path")
-    if payload_path:
-        payload = json.loads(pathlib.Path(payload_path).read_text())
-    return payload
+import xcodex_hooks
 
 
 def main() -> int:
-    payload = read_payload()
+    payload = xcodex_hooks.read_payload()
+    # Add your logic here. For example, filter by event type:
+    # if payload.get("type") != "tool-call-finished": return 0
     codex_home = pathlib.Path(os.environ.get("CODEX_HOME", str(pathlib.Path.home() / ".xcodex")))
     out = codex_home / "hooks.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -26,4 +25,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

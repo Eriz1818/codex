@@ -20,6 +20,7 @@ use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::exec_policy::ExecPolicyManager;
 use crate::features::Feature;
 use crate::features::Features;
+use crate::hooks::UserHooks;
 use crate::models_manager::manager::ModelsManager;
 use crate::parse_command::parse_command;
 use crate::parse_turn_item;
@@ -28,7 +29,6 @@ use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
 use crate::terminal;
 use crate::truncate::TruncationPolicy;
-use crate::user_notification::UserHooks;
 use crate::user_notification::UserNotifier;
 use crate::util::error_or_panic;
 use async_channel::Receiver;
@@ -501,6 +501,10 @@ pub(crate) struct SessionSettingsUpdate {
 }
 
 impl Session {
+    pub(crate) fn thread_id(&self) -> String {
+        self.conversation_id.to_string()
+    }
+
     /// Don't expand the number of mutated arguments on config. We are in the process of getting rid of it.
     pub(crate) fn build_per_turn_config(session_configuration: &SessionConfiguration) -> Config {
         // todo(aibrahim): store this state somewhere else so we don't need to mut config
@@ -725,6 +729,8 @@ impl Session {
                 config.codex_home.clone(),
                 config.hooks.clone(),
                 Some(tx_event.clone()),
+                config.sandbox_policy.get().clone(),
+                config.codex_linux_sandbox_exe.clone(),
             ),
             unified_exec_manager: UnifiedExecProcessManager::default(),
             notifier: UserNotifier::new(config.notify.clone()),
@@ -1649,14 +1655,12 @@ impl Session {
 
     pub(crate) async fn set_total_tokens_full(&self, turn_context: &TurnContext) {
         let context_window = turn_context.client.get_model_context_window();
+        let full_model_context_window = turn_context.client.get_full_model_context_window();
         if let Some(context_window) = context_window {
-            let mut state = self.state.lock().await;
-            state.set_token_usage_full(
-                context_window,
-                turn_context.client.get_full_model_context_window(),
-            );
-            drop(state);
-
+            {
+                let mut state = self.state.lock().await;
+                state.set_token_usage_full(context_window, full_model_context_window);
+            }
             self.send_token_count_event(turn_context).await;
         }
     }
@@ -2157,6 +2161,22 @@ mod handlers {
             .get_otel_manager()
             .user_prompt(&items);
 
+        let prompt = items
+            .iter()
+            .filter_map(|item| match item {
+                UserInput::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !prompt.trim().is_empty() {
+            sess.user_hooks().user_prompt_submit(
+                sess.conversation_id.to_string(),
+                current_context.cwd.display().to_string(),
+                prompt,
+            );
+        }
+
         // Attempt to inject input into current task
         if let Err(items) = sess.inject_input(items).await {
             if let Some(env_item) =
@@ -2497,6 +2517,11 @@ mod handlers {
 
     pub async fn compact(sess: &Arc<Session>, sub_id: String) {
         let turn_context = sess.new_default_turn_with_sub_id(sub_id).await;
+        sess.user_hooks().pre_compact(
+            sess.conversation_id.to_string(),
+            turn_context.cwd.display().to_string(),
+            "manual".to_string(),
+        );
 
         sess.spawn_task(
             Arc::clone(&turn_context),
@@ -2966,6 +2991,11 @@ pub(crate) async fn run_turn(
 }
 
 async fn run_auto_compact(sess: &Arc<Session>, turn_context: &Arc<TurnContext>) {
+    sess.user_hooks().pre_compact(
+        sess.conversation_id.to_string(),
+        turn_context.cwd.display().to_string(),
+        "auto".to_string(),
+    );
     if should_use_remote_compact_task(sess.as_ref(), &turn_context.client.get_provider()) {
         run_inline_remote_auto_compact_task(Arc::clone(sess), Arc::clone(turn_context)).await;
     } else {
@@ -4070,6 +4100,8 @@ mod tests {
                 config.codex_home.clone(),
                 crate::config::HooksConfig::default(),
                 None,
+                config.sandbox_policy.get().clone(),
+                config.codex_linux_sandbox_exe.clone(),
             ),
             unified_exec_manager: UnifiedExecProcessManager::default(),
             notifier: UserNotifier::new(None),
@@ -4169,6 +4201,8 @@ mod tests {
                 config.codex_home.clone(),
                 crate::config::HooksConfig::default(),
                 None,
+                config.sandbox_policy.get().clone(),
+                config.codex_linux_sandbox_exe.clone(),
             ),
             unified_exec_manager: UnifiedExecProcessManager::default(),
             notifier: UserNotifier::new(None),

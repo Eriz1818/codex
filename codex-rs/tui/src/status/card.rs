@@ -49,7 +49,8 @@ use unicode_width::UnicodeWidthStr;
 struct StatusContextWindowData {
     percent_remaining: i64,
     tokens_in_context: i64,
-    window: i64,
+    budget_window: i64,
+    full_window: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -516,30 +517,23 @@ impl StatusHistoryCell {
         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
         let session_stats = session_stats.filter(|stats| !stats.is_empty()).cloned();
         let default_usage = TokenUsage::default();
-        let (context_usage, context_window, full_context_window) = match token_info {
+        let (context_usage, budget_window, full_window) = match token_info {
             Some(info) => (
                 &info.last_token_usage,
                 info.model_context_window,
                 info.full_model_context_window,
             ),
-            None => (
-                &default_usage,
-                config.model_context_window,
-                config.model_context_window,
-            ),
+            None => (&default_usage, config.model_context_window, None),
         };
-        let context_window = match (
-            full_context_window.or(context_window),
-            context_window.or(full_context_window),
-        ) {
-            (Some(display_window), Some(percent_window)) => Some(StatusContextWindowData {
-                percent_remaining: context_usage
-                    .percent_of_context_window_remaining(percent_window),
+        let context_window = budget_window.or(full_window).map(|budget_window| {
+            let full_window = full_window.filter(|full| *full != budget_window);
+            StatusContextWindowData {
+                percent_remaining: context_usage.percent_of_context_window_remaining(budget_window),
                 tokens_in_context: context_usage.tokens_in_context_window(),
-                window: display_window,
-            }),
-            _ => None,
-        };
+                budget_window,
+                full_window,
+            }
+        });
 
         let token_usage = StatusTokenUsageData {
             total: total_usage.blended_total(),
@@ -594,19 +588,28 @@ impl StatusHistoryCell {
         let context = self.token_usage.context_window.as_ref()?;
         let percent = context.percent_remaining;
         let used_fmt = format_tokens_compact(context.tokens_in_context);
-        let window_fmt = format_tokens_compact(context.window);
+        let budget_fmt = format_tokens_compact(context.budget_window);
+        let display_window = context.full_window.unwrap_or(context.budget_window);
+        let display_fmt = format_tokens_compact(display_window);
         let percent_remaining = (percent as f64).clamp(0.0, 100.0);
 
-        Some(vec![
+        let mut spans = vec![
             Span::from(render_status_limit_progress_bar(percent_remaining)),
             Span::from(" "),
             Span::from(format!("{percent}% left")),
             Span::from(" (").dim(),
             Span::from(used_fmt).dim(),
             Span::from(" used / ").dim(),
-            Span::from(window_fmt).dim(),
-            Span::from(")").dim(),
-        ])
+            Span::from(display_fmt).dim(),
+        ];
+
+        if context.full_window.is_some() {
+            spans.extend([Span::from(", budget ").dim(), Span::from(budget_fmt).dim()]);
+        }
+
+        spans.extend([Span::from(")").dim()]);
+
+        Some(spans)
     }
 
     fn context_window_spans_for_menu(&self, limit_bar_indent: usize) -> Option<Vec<Span<'static>>> {

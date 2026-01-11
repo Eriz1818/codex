@@ -1,0 +1,11 @@
+[package]
+name = "xcodex-hooks-rust-template"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codex-hooks-sdk = { path = "../../../../hooks-sdk" }
+serde_json = "1"
+
+[workspace]

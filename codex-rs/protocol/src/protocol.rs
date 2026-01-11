@@ -989,7 +989,7 @@ impl TokenUsageInfo {
 
     pub fn fill_to_context_window(&mut self, context_window: i64) {
         self.model_context_window = Some(context_window);
-        self.full_model_context_window = Some(context_window);
+        self.full_model_context_window.get_or_insert(context_window);
         self.last_token_usage = TokenUsage {
             total_tokens: context_window,
             ..TokenUsage::default()

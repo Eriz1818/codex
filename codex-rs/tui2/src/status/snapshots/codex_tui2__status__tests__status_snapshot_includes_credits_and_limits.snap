@@ -4,26 +4,25 @@ expression: sanitized
 ---
 /status
 
-╭───────────────────────────────────────────────────────────────────────╮
-│  ⚡xtreme-Codex (v0.1.0)                                              │
-│                                                                       │
-│ Visit https://chatgpt.com/codex/settings/usage for up-to-date         │
-│ information on rate limits and credits                                │
-│                                                                       │
-│  UI:               tui2                                               │
-│  Power:            ⚡⚡⚡                                             │
-│  Model:            gpt-5.1-codex (reasoning none, summaries auto)     │
-│  Directory: [[workspace]]                                             │
-│  CODEX_HOME: [[codex_home]]                                             │
-│  Approval:         on-request                                         │
-│  Sandbox:          read-only                                          │
-│  Agents.md:        <none>                                             │
-│  Auto-compact:     disabled                                           │
-│  Thoughts:         hidden                                             │
-│                                                                       │
-│  Token usage:      2K total  (1.4K input + 600 output)                │
-│  Context window:   [████████████████████] 99% left (2.2K used / 272K) │
-│  5h limit:         [███████████░░░░░░░░░] 55% left (resets 09:25)     │
-│  Weekly limit:     [██████████████░░░░░░] 70% left (resets 09:55)     │
-│  Credits:          38 credits                                         │
-╰───────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  >_ xtreme-Codex (v0.1.0)                                                    │
+│                                                                              │
+│ Visit https://chatgpt.com/codex/settings/usage for up-to-date                │
+│ information on rate limits and credits                                       │
+│                                                                              │
+│  UI:               tui2                                                      │
+│  Model:            gpt-5.1-codex (reasoning none, summaries auto)            │
+│  Directory: [[workspace]]                                                    │
+│  CODEX_HOME: [[codex_home]]                                                    │
+│  Approval:         on-request                                                │
+│  Sandbox:          read-only                                                 │
+│  Agents.md:        <none>                                                    │
+│  Auto-compact:     disabled                                                  │
+│  Thoughts:         shown                                                     │
+│                                                                              │
+│  Token usage:      2K total  (1.4K input + 600 output)                       │
+│  Context window:   [████████████████████] 99% left (2.2K used / 272K, budget │
+│  5h limit:         [███████████░░░░░░░░░] 55% left (resets 09:25)            │
+│  Weekly limit:     [██████████████░░░░░░] 70% left (resets 09:55)            │
+│  Credits:          38 credits                                                │
+╰──────────────────────────────────────────────────────────────────────────────╯

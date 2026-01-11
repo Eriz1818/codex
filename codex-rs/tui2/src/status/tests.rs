@@ -43,14 +43,13 @@ fn test_auth_manager(config: &Config) -> AuthManager {
 fn token_info_for(model_slug: &str, config: &Config, usage: &TokenUsage) -> TokenUsageInfo {
     let model_info = ModelsManager::construct_model_info_offline(model_slug, config);
     let full_context_window = model_info.context_window.or(config.model_context_window);
-    let effective_context_window = full_context_window.map(|window| {
-        let percent = model_info.effective_context_window_percent.clamp(1, 100);
-        window.saturating_mul(percent) / 100
-    });
+    let percent = model_info.effective_context_window_percent.clamp(1, 100);
+    let context_window =
+        full_context_window.map(|window| window.saturating_mul(percent).saturating_div(100));
     TokenUsageInfo {
         total_token_usage: usage.clone(),
         last_token_usage: usage.clone(),
-        model_context_window: effective_context_window,
+        model_context_window: context_window,
         full_model_context_window: full_context_window,
     }
 }
@@ -873,11 +872,16 @@ async fn status_context_window_uses_last_usage() {
         .expect("timestamp");
 
     let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_info = ModelsManager::construct_model_info_offline(&model_slug, &config);
+    let full_context_window = model_info.context_window.or(config.model_context_window);
+    let percent = model_info.effective_context_window_percent.clamp(1, 100);
+    let budget_context_window =
+        full_context_window.map(|window| window.saturating_mul(percent).saturating_div(100));
     let token_info = TokenUsageInfo {
         total_token_usage: total_usage.clone(),
         last_token_usage: last_usage,
-        model_context_window: config.model_context_window,
-        full_model_context_window: config.model_context_window,
+        model_context_window: budget_context_window,
+        full_model_context_window: full_context_window,
     };
     let composite = new_status_output(
         &config,
@@ -899,6 +903,10 @@ async fn status_context_window_uses_last_usage() {
     assert!(
         context_line.contains("13.7K used / 272K"),
         "expected context line to reflect last usage tokens, got: {context_line}"
+    );
+    assert!(
+        context_line.contains("budg"),
+        "expected context line to include budget window, got: {context_line}"
     );
     assert!(
         !context_line.contains("102K"),

@@ -1280,14 +1280,15 @@ impl HistoryCell for SessionHeaderHistoryCell {
 
         let make_row = |spans: Vec<Span<'static>>| Line::from(spans);
 
-        // Title line rendered inside the box: "⚡ xtreme-Codex (vX)"
         let mut title_spans: Vec<Span<'static>> =
             xtreme::title_prefix_spans(self.xtreme_ui_enabled);
-        title_spans.extend([
-            Span::from("xtreme-Codex").bold(),
-            Span::from(" ").dim(),
-            Span::from(format!("(v{})", self.version)).dim(),
-        ]);
+        title_spans.push(Span::from("xtreme-Codex").bold());
+        if codex_core::build_info::pyo3_hooks_enabled() {
+            title_spans.push(Span::from(" ").dim());
+            title_spans.push(Span::from("(with PyO3)").magenta());
+        }
+        title_spans.push(Span::from(" ").dim());
+        title_spans.push(Span::from(format!("(v{})", self.version)).dim());
 
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
@@ -1332,6 +1333,17 @@ impl HistoryCell for SessionHeaderHistoryCell {
             lines.push(make_row(spans));
         }
         lines.push(make_row(model_spans));
+        if let Some(version) = codex_core::build_info::pyo3_python_version() {
+            let python_label = format!(
+                "{python_label:<label_width$}",
+                python_label = "python:",
+                label_width = label_width
+            );
+            lines.push(make_row(vec![
+                Span::from(format!("{python_label} ")).dim(),
+                Span::from(version),
+            ]));
+        }
         lines.push(make_row(dir_spans));
 
         with_border(lines)

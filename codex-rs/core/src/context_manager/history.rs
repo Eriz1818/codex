@@ -45,10 +45,10 @@ impl ContextManager {
     ) {
         match &mut self.token_info {
             Some(info) => {
-                info.fill_to_context_window(context_window);
                 if info.full_model_context_window.is_none() {
                     info.full_model_context_window = full_model_context_window;
                 }
+                info.fill_to_context_window(context_window);
             }
             None => {
                 let mut info = TokenUsageInfo::full_context_window(context_window);

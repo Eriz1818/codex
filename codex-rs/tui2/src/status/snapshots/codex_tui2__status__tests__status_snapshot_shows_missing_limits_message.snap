@@ -4,24 +4,23 @@ expression: sanitized
 ---
 /status
 
-╭───────────────────────────────────────────────────────────────────────╮
-│  ⚡xtreme-Codex (v0.1.0)                                              │
-│                                                                       │
-│ Visit https://chatgpt.com/codex/settings/usage for up-to-date         │
-│ information on rate limits and credits                                │
-│                                                                       │
-│  UI:               tui2                                               │
-│  Power:            ⚡⚡⚡                                             │
-│  Model:            gpt-5.1-codex-max (reasoning none, summaries auto) │
-│  Directory: [[workspace]]                                             │
-│  CODEX_HOME: [[codex_home]]                                             │
-│  Approval:         on-request                                         │
-│  Sandbox:          read-only                                          │
-│  Agents.md:        <none>                                             │
-│  Auto-compact:     disabled                                           │
-│  Thoughts:         hidden                                             │
-│                                                                       │
-│  Token usage:      750 total  (500 input + 250 output)                │
-│  Context window:   [████████████████████] 100% left (750 used / 272K) │
-│  Limits:           data not available yet                             │
-╰───────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│  >_ xtreme-Codex (v0.1.0)                                                    │
+│                                                                              │
+│ Visit https://chatgpt.com/codex/settings/usage for up-to-date                │
+│ information on rate limits and credits                                       │
+│                                                                              │
+│  UI:               tui2                                                      │
+│  Model:            gpt-5.1-codex-max (reasoning none, summaries auto)        │
+│  Directory: [[workspace]]                                                    │
+│  CODEX_HOME: [[codex_home]]                                                    │
+│  Approval:         on-request                                                │
+│  Sandbox:          read-only                                                 │
+│  Agents.md:        <none>                                                    │
+│  Auto-compact:     disabled                                                  │
+│  Thoughts:         shown                                                     │
+│                                                                              │
+│  Token usage:      750 total  (500 input + 250 output)                       │
+│  Context window:   [████████████████████] 100% left (750 used / 272K, budget │
+│  Limits:           data not available yet                                    │
+╰──────────────────────────────────────────────────────────────────────────────╯

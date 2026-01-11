@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
+"""
+Example hook: show a Linux desktop notification for hook events (notify-send).
+"""
 import json
-import pathlib
 import shutil
 import subprocess
-import sys
 
-
-def read_payload() -> dict:
-    raw = sys.stdin.read() or "{}"
-    payload = json.loads(raw)
-    payload_path = payload.get("payload-path")
-    if payload_path:
-        payload = json.loads(pathlib.Path(payload_path).read_text())
-    return payload
-
+import xcodex_hooks
 
 def main() -> int:
-    payload = read_payload()
+    payload = xcodex_hooks.read_payload()
 
     notify_send = shutil.which("notify-send")
     if notify_send is None:
@@ -44,4 +37,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

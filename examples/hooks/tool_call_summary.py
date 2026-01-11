@@ -1,21 +1,16 @@
 #!/usr/bin/env python3
+"""
+Example hook: append a compact summary for tool-call-finished events.
+"""
 import json
 import os
 import pathlib
-import sys
 
-
-def read_payload() -> dict:
-    raw = sys.stdin.read() or "{}"
-    payload = json.loads(raw)
-    payload_path = payload.get("payload-path")
-    if payload_path:
-        payload = json.loads(pathlib.Path(payload_path).read_text())
-    return payload
+import xcodex_hooks
 
 
 def main() -> int:
-    payload = read_payload()
+    payload = xcodex_hooks.read_payload()
     if payload.get("type") != "tool-call-finished":
         return 0
 

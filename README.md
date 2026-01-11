@@ -24,7 +24,7 @@ When filing issues, include repro steps and attach the files printed by `/feedba
 - Hide/show agent thoughts in the TUI with `/thoughts` (see [`docs/xcodex/thoughts.md`](docs/xcodex/thoughts.md)).
 - Track your worktrees and branches in the status bar with `/settings` (see [`docs/xcodex/settings.md`](docs/xcodex/settings.md)).
 - Switch a session between git worktrees with `/worktree` (see [`docs/xcodex/worktrees.md`](docs/xcodex/worktrees.md)).
-- Automate xcodex with hooks (session/model/tool lifecycle events; see [`docs/xcodex/hooks.md`](docs/xcodex/hooks.md)).
+- Automate xcodex with hooks (see [`docs/xcodex/hooks.md`](docs/xcodex/hooks.md) and [`docs/xcodex/hooks-python-host.md`](docs/xcodex/hooks-python-host.md)).
 - Manage background terminals with `/ps` (list) and `/ps-kill` (terminate) (see [`docs/xcodex/background-terminals.md`](docs/xcodex/background-terminals.md)).
 
 **Fork-only docs**
@@ -94,11 +94,35 @@ cat PROMPT.md | xcodex
 
 Hooks can receive event payloads containing metadata like `cwd`, and may include truncated tool output previews. Treat hook payloads/logs as potentially sensitive.
 
+**What xcodex supports**
+
+- External hooks (default): spawn a command on lifecycle events; any language/runtime can be used.
+- Python Host hooks (recommended for stateful Python): long-lived host process, JSONL over stdin.
+- PyO3 hooks (advanced): in-process Python via a separately-built binary.
+- Typed hook SDK installers: `xcodex hooks install sdks <sdk>` (Python/Rust/JavaScript/TypeScript/Go/Ruby/Java).
+
+**Performance (rough numbers)**
+
+Measured on macOS 26.2 (arm64), Python 3.11 (event: `tool-call-finished`, payload: 373 bytes):
+
+```bash
+cd codex-rs
+PYO3_PYTHON=$(command -v python3.11) cargo run -p codex-core --bin hooks_perf --release --features pyo3-hooks -- --python $(command -v python3.11) --iters 20000 --warmup 2000 --external-iters 200 --markdown
+```
+
+- External hook (Python, per-event spawn): ~20.2ms/event (includes `serde_json::to_string` + `json.loads`)
+- Out-of-proc host (Python, persistent): ~1.98µs/event (JSONL over stdin; includes `serde_json::to_string` + `json.loads`)
+- In-proc baseline: ~0.33ns/iter (Rust loop only)
+- In-proc PyO3: ~2.22µs/event (includes `serde_json::to_string` + `json.loads` + Python callable)
+
 Start here:
 
 - Hook configuration + supported events: `docs/xcodex/hooks.md`.
+- Typed hook SDKs + installers (Python/Rust/JS/TS/Go/Ruby/Java): `docs/xcodex/hooks-sdks.md`.
+- Python Host hooks (long-lived “python box”): `docs/xcodex/hooks-python-host.md`.
+- PyO3 hooks (in-process; separately built): `docs/xcodex/hooks-pyo3.md`.
 - Copy/paste scripts: `examples/hooks/` and `docs/xcodex/hooks-gallery.md`.
-- Quick smoke test for your hook scripts: `xcodex hooks test --configured-only`.
+- CLI helpers: `xcodex hooks help`, `xcodex hooks init`, `xcodex hooks install sdks list`, `xcodex hooks install samples list`.
 
 ### Configuration
 

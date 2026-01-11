@@ -1,0 +1,529 @@
+{
+  "hook_payload": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "HookPayload",
+    "type": "object",
+    "required": [
+      "cwd",
+      "event_id",
+      "hook_event_name",
+      "permission_mode",
+      "schema_version",
+      "session_id",
+      "timestamp",
+      "transcript_path",
+      "xcodex_event_type"
+    ],
+    "properties": {
+      "approval_policy": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/AskForApproval"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "attempt": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint32",
+        "minimum": 0.0
+      },
+      "call_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "command": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "cwd": {
+        "type": "string"
+      },
+      "duration_ms": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint64",
+        "minimum": 0.0
+      },
+      "event_id": {
+        "type": "string"
+      },
+      "grant_root": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "has_output_schema": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "hook_event_name": {
+        "type": "string"
+      },
+      "input_item_count": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0.0
+      },
+      "input_messages": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "kind": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "last_assistant_message": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "message": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "model": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "model_request_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "needs_follow_up": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "notification_type": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "output_bytes": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0.0
+      },
+      "output_preview": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "parallel_tool_calls": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "paths": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "permission_mode": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "proposed_execpolicy_amendment": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "provider": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "reason": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "response_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "sandbox_policy": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/SandboxPolicy"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "schema_version": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0.0
+      },
+      "server_name": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "session_id": {
+        "type": "string"
+      },
+      "session_source": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "status": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "subagent": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "success": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "timestamp": {
+        "type": "string"
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "token_usage": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TokenUsage"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "tool_count": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0.0
+      },
+      "tool_input": true,
+      "tool_name": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "tool_response": true,
+      "tool_use_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "transcript_path": {
+        "type": "string"
+      },
+      "trigger": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "turn_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "xcodex_event_type": {
+        "type": "string"
+      }
+    },
+    "definitions": {
+      "AbsolutePathBuf": {
+        "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
+        "type": "string"
+      },
+      "AskForApproval": {
+        "description": "Determines the conditions under which the user is consulted to approve running the command proposed by Codex.",
+        "oneOf": [
+          {
+            "description": "Under this policy, only \"known safe\" commands—as determined by `is_safe_command()`—that **only read files** are auto‑approved. Everything else will ask the user to approve.",
+            "type": "string",
+            "enum": [
+              "untrusted"
+            ]
+          },
+          {
+            "description": "*All* commands are auto‑approved, but they are expected to run inside a sandbox where network access is disabled and writes are confined to a specific set of paths. If the command fails, it will be escalated to the user to approve execution without a sandbox.",
+            "type": "string",
+            "enum": [
+              "on-failure"
+            ]
+          },
+          {
+            "description": "The model decides when to ask the user for approval.",
+            "type": "string",
+            "enum": [
+              "on-request"
+            ]
+          },
+          {
+            "description": "Never ask the user to approve commands. Failures are immediately returned to the model, and never escalated to the user for approval.",
+            "type": "string",
+            "enum": [
+              "never"
+            ]
+          }
+        ]
+      },
+      "NetworkAccess": {
+        "description": "Represents whether outbound network access is available to the agent.",
+        "type": "string",
+        "enum": [
+          "restricted",
+          "enabled"
+        ]
+      },
+      "SandboxPolicy": {
+        "description": "Determines execution restrictions for model shell commands.",
+        "oneOf": [
+          {
+            "description": "No restrictions whatsoever. Use with caution.",
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "danger-full-access"
+                ]
+              }
+            }
+          },
+          {
+            "description": "Read-only access to the entire file-system.",
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "read-only"
+                ]
+              }
+            }
+          },
+          {
+            "description": "Indicates the process is already in an external sandbox. Allows full disk access while honoring the provided network setting.",
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "network_access": {
+                "description": "Whether the external sandbox permits outbound network traffic.",
+                "default": "restricted",
+                "allOf": [
+                  {
+                    "$ref": "#/definitions/NetworkAccess"
+                  }
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "external-sandbox"
+                ]
+              }
+            }
+          },
+          {
+            "description": "Same as `ReadOnly` but additionally grants write access to the current working directory (\"workspace\").",
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "exclude_slash_tmp": {
+                "description": "When set to `true`, will NOT include the `/tmp` among the default writable roots on UNIX. Defaults to `false`.",
+                "default": false,
+                "type": "boolean"
+              },
+              "exclude_tmpdir_env_var": {
+                "description": "When set to `true`, will NOT include the per-user `TMPDIR` environment variable among the default writable roots. Defaults to `false`.",
+                "default": false,
+                "type": "boolean"
+              },
+              "network_access": {
+                "description": "When set to `true`, outbound network access is allowed. `false` by default.",
+                "default": false,
+                "type": "boolean"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "workspace-write"
+                ]
+              },
+              "writable_roots": {
+                "description": "Additional folders (beyond cwd and possibly TMPDIR) that should be writable from within the sandbox.",
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/AbsolutePathBuf"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "TokenUsage": {
+        "type": "object",
+        "required": [
+          "cached_input_tokens",
+          "input_tokens",
+          "output_tokens",
+          "reasoning_output_tokens",
+          "total_tokens"
+        ],
+        "properties": {
+          "cached_input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "output_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reasoning_output_tokens": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      }
+    }
+  },
+  "stdin_envelope": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "HookStdinEnvelope",
+    "type": "object",
+    "required": [
+      "event_id",
+      "hook_event_name",
+      "payload_path",
+      "schema_version",
+      "timestamp",
+      "xcodex_event_type"
+    ],
+    "properties": {
+      "event_id": {
+        "type": "string"
+      },
+      "hook_event_name": {
+        "type": "string"
+      },
+      "payload_path": {
+        "type": "string"
+      },
+      "schema_version": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0.0
+      },
+      "timestamp": {
+        "type": "string"
+      },
+      "xcodex_event_type": {
+        "type": "string"
+      }
+    }
+  }
+}
