@@ -740,7 +740,7 @@ When Codex detects WSL 2 inside Windows Terminal (the session exports `WT_SESSIO
 
 `hooks` lets you run one or more external programs when Codex emits specific lifecycle events. Hooks are fire-and-forget: failures are logged and do not affect the session.
 
-Hook commands are configured as argv arrays. Codex writes event JSON to hook stdin. For large payloads, Codex writes the full payload to a file under CODEX_HOME and writes a small JSON envelope to stdin containing `payload-path`.
+Hook commands are configured as argv arrays. Codex writes event JSON to hook stdin. For large payloads, Codex writes the full payload to a file under CODEX_HOME and writes a small JSON envelope to stdin containing `payload_path`.
 
 Hook stdout/stderr are redirected to log files under CODEX_HOME so hooks do not interfere with the interactive TUI.
 
@@ -749,6 +749,40 @@ Hook stdout/stderr are redirected to log files under CODEX_HOME so hooks do not 
 agent_turn_complete = [["python3", "/Users/alice/.codex/hook.py"]]
 approval_requested = [["python3", "/Users/alice/.codex/hook.py"]]
 ```
+
+#### hooks.command (matcher + per-hook options)
+
+`hooks.command` is a higher-level command-hook config surface that mirrors Claude’s “event → matcher → hooks” schema while staying TOML-first in `~/.codex/config.toml`.
+
+This is still observer-only: hook failures and outputs never block or modify the run.
+
+Example:
+
+```toml
+[hooks.command]
+default_timeout_sec = 30
+
+[[hooks.command.tool_call_finished]]
+# Recommended: match on xcodex tool ids (stable/precise).
+matcher = "write_file|edit_block"
+  [[hooks.command.tool_call_finished.hooks]]
+  argv = ["python3", "/Users/alice/.codex/hooks/tool_call_summary.py"]
+
+[[hooks.command.approval_requested]]
+# Also accepts Claude aliases like "Bash" / "Edit" / "MCP".
+matcher = "exec"
+  [[hooks.command.approval_requested.hooks]]
+  command = "terminal-notifier -title 'xcodex' -message 'approval requested'"
+  timeout_sec = 5
+```
+
+Notes:
+
+- `argv` is recommended; `command` is a QoL escape hatch and is executed via a shell wrapper (`bash -lc ...` / `cmd.exe /C ...`).
+- `matcher` is evaluated for tool-scoped events (tool calls and approval requests). For other events, `matcher` is ignored (treated as `*`).
+- `matcher` can match either:
+  - xcodex tool ids (for example `write_file`, `edit_block`, `exec_command`), or
+  - Claude tool-name aliases when available (for example `Write`, `Edit`, `Bash`).
 
 In xcodex, you can also enable built-in in-process (Rust) hooks.
 
@@ -776,7 +810,7 @@ This is useful for stateful hooks (e.g. Python) without per-event process spawn 
 The host receives one line per event:
 
 - `type = "hook-event"`
-- `event = { ... }` where `event` is the same payload object an external hook would receive on stdin (including `schema-version`, `type`, `event-id`, `timestamp`, etc.)
+- `event = { ... }` where `event` is the same payload object an external hook would receive on stdin (including `schema_version`, `event_id`, `timestamp`, `hook_event_name`, `xcodex_event_type`, etc.)
 
 Example:
 
@@ -808,14 +842,14 @@ codex --no-hooks
 codex exec --no-hooks "…"
 ```
 
-To exercise your configured hook commands with synthetic payloads (without running a full session), use:
+To exercise your configured hook commands (both `hooks.command` and legacy `[hooks]`) with synthetic payloads (without running a full session), use:
 
 ```sh
-codex hooks test
+codex hooks test external
 ```
 
-Hook payloads include `"schema-version": 1`, a `"type"` field, `"event-id"`, and `"timestamp"`.
-For the forward-compatibility rules (unknown fields/types, when `schema-version` bumps), see `docs/xcodex/hooks.md`.
+Hook payloads include `"schema_version": 1`, `"event_id"`, `"timestamp"`, `"hook_event_name"`, and `"xcodex_event_type"`.
+For the compatibility policy, see `docs/xcodex/hooks.md`.
 
 Supported events:
 
@@ -823,16 +857,45 @@ Supported events:
 - `approval-requested` (with `"kind"` set to `"exec"`, `"apply-patch"`, or `"elicitation"`)
 - `session-start`
 - `session-end`
+- `user-prompt-submit`
+- `pre-compact`
+- `notification`
+- `subagent-stop`
 - `model-request-started`
 - `model-response-completed`
 - `tool-call-started`
 - `tool-call-finished`
 
-Note: `tool-call-started` is emitted when the tool call is dispatched; `duration-ms` in `tool-call-finished` includes any time spent queued behind non-parallel tool calls.
+Note: `tool-call-started` is emitted when the tool call is dispatched; `duration_ms` in `tool-call-finished` includes any time spent queued behind non-parallel tool calls.
 
 In the interactive TUI, quitting while hooks are still running prompts for confirmation by default. Toggle with `tui.confirm_exit_with_running_hooks`.
 
 If `notify` is configured, Codex emits a deprecation notice and ignores it; migrate to `hooks.agent_turn_complete`.
+
+#### Event name aliases (for hooks.command and matcher filters)
+
+For `hooks.command` and matcher filters (`hooks.host.filters`, `hooks.pyo3.filters`), xcodex accepts several event-name aliases and maps them to the canonical xcodex events above.
+
+Claude aliases:
+
+- `SessionStart` → `session-start`
+- `SessionEnd` → `session-end`
+- `UserPromptSubmit` → `user-prompt-submit`
+- `PreCompact` → `pre-compact`
+- `Notification` → `notification`
+- `Stop` → `agent-turn-complete`
+- `SubagentStop` → `subagent-stop`
+- `PermissionRequest` → `approval-requested`
+- `PreToolUse` → `tool-call-started`
+- `PostToolUse` → `tool-call-finished`
+
+OpenCode aliases (quote keys containing dots in TOML):
+
+- `"session.start"` → `session-start`
+- `"session.end"` → `session-end`
+- `"tool.execute.before"` → `tool-call-started`
+- `"tool.execute.after"` → `tool-call-finished`
+- `"tui.toast.show"` → `notification`
 
 ### hide_agent_reasoning
 
@@ -1100,16 +1163,31 @@ Valid values:
 | `hooks.approval_requested`                       | array<array<string>>                                              | External programs to spawn when Codex requests approvals (exec/apply_patch/MCP elicitation).                                     |
 | `hooks.session_start`                            | array<array<string>>                                              | External programs to spawn when a session starts (after `SessionConfigured`).                                                   |
 | `hooks.session_end`                              | array<array<string>>                                              | External programs to spawn when a session ends (best-effort during shutdown).                                                   |
+| `hooks.user_prompt_submit`                       | array<array<string>>                                              | External programs to spawn when the user submits input.                                                                         |
+| `hooks.pre_compact`                              | array<array<string>>                                              | External programs to spawn before Codex compacts the conversation.                                                              |
+| `hooks.notification`                             | array<array<string>>                                              | External programs to spawn when Codex emits a notification event.                                                               |
+| `hooks.subagent_stop`                            | array<array<string>>                                              | External programs to spawn when a subagent finishes (for example, review subagents).                                            |
 | `hooks.model_request_started`                    | array<array<string>>                                              | External programs to spawn immediately before issuing a model request.                                                           |
 | `hooks.model_response_completed`                 | array<array<string>>                                              | External programs to spawn after a model response completes.                                                                    |
 | `hooks.tool_call_started`                        | array<array<string>>                                              | External programs to spawn when a tool call begins execution.                                                                   |
 | `hooks.tool_call_finished`                       | array<array<string>>                                              | External programs to spawn when a tool call finishes (success/failure/aborted).                                                 |
+| `hooks.command.default_timeout_sec`              | integer                                                           | Default timeout (seconds) for `hooks.command` entries when `timeout_sec` is unset (default: 30).                                |
+| `hooks.command.<event>`                          | array<table>                                                      | Claude-style command hooks: per-event matcher entries with `hooks = [{ argv/command, timeout_sec }]`. See `hooks.command` docs. |
+| `hooks.command.<event>.hooks[*].payload`         | `xcodex` \| `claude`                                               | Optional stdin payload format. Use `claude` when running hook scripts that expect Claude-shaped JSON.                            |
 | `hooks.inproc`                                   | array<string>                                                     | Built-in in-process (Rust) hooks to enable by name (e.g. `["tool_call_summary"]`, `["event_log_jsonl"]`).                       |
 | `hooks.inproc_tool_call_summary`                 | boolean                                                           | Back-compat alias for enabling the in-proc `tool_call_summary` hook (default: false).                                           |
+| `hooks.enable_unsafe_inproc`                     | boolean                                                           | Gate user-provided in-process hooks (for example, experimental PyO3 hooks) behind an explicit acknowledgement (default: false). |
+| `hooks.pyo3.script_path`                         | string                                                            | Path to a Python file defining the PyO3 hook callable (used when enabling `hooks.inproc = ["pyo3"]`).                           |
+| `hooks.pyo3.callable`                            | string                                                            | Python callable name to invoke for each event (default: `on_event`).                                                            |
+| `hooks.pyo3.batch_size`                          | integer                                                           | Optional batch size N>1; when set and the script defines `on_events(events: list[dict])`, xcodex calls `on_events` with batches. |
+| `hooks.pyo3.timeout_sec`                         | integer                                                           | Optional per-invocation timeout for the PyO3 hook (seconds).                                                                    |
+| `hooks.pyo3.filters.<event>`                     | array<table>                                                      | Optional per-event matcher filters for PyO3 (same matcher semantics as `hooks.command`).                                         |
 | `hooks.host.enabled`                             | boolean                                                           | Enable the long-lived hook host process (default: false).                                                                       |
 | `hooks.host.command`                             | array<string>                                                     | Command argv to spawn the hook host (required when enabled).                                                                    |
 | `hooks.host.sandbox_mode`                        | `read-only` \| `workspace-write` \| `danger-full-access`           | Optional sandbox override for the hook host; when unset, inherits the session sandbox policy.                                   |
-| `hooks.max_stdin_payload_bytes`                  | integer                                                           | Max payload size (bytes) to send directly via stdin (default: 16384); above this uses `payload-path` file delivery.             |
+| `hooks.host.timeout_sec`                         | integer                                                           | Optional per-event write timeout to the host stdin (seconds).                                                                   |
+| `hooks.host.filters.<event>`                     | array<table>                                                      | Optional per-event matcher filters for the hook host (same matcher semantics as `hooks.command`).                               |
+| `hooks.max_stdin_payload_bytes`                  | integer                                                           | Max payload size (bytes) to send directly via stdin (default: 16384); above this uses `payload_path` file delivery.             |
 | `hooks.keep_last_n_payloads`                     | integer                                                           | Keep only the most recent N payload/log files under CODEX_HOME (default: 50).                                                   |
 | `tui.animations`                                 | boolean                                                           | Enable terminal animations (welcome screen, shimmer, spinner). Defaults to true; set to `false` to disable visual motion.       |
 | `tui.confirm_exit_with_running_hooks`            | boolean                                                           | Confirm exit when external hooks are still running (default: true).                                                             |
