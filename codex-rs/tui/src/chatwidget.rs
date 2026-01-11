@@ -1109,7 +1109,7 @@ impl ChatWidget {
                 && self.composer_is_empty()
                 && self.is_normal_backtrack_mode();
             if can_retry_in_place {
-                message.push_str(" Press `r` to retry (or run `/mcp retry failed`).");
+                message.push_str(" Press `r` or run `/mcp retry failed` to retry.");
             } else {
                 message.push_str(" Run `/mcp retry failed` to retry.");
             }
