@@ -8,7 +8,7 @@
  * It imports the shared helper from `$CODEX_HOME/hooks/xcodex_hooks.mjs`,
  * installed by:
  *
- *   xcodex hooks install javascript
+ *   xcodex hooks install sdks javascript
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -18,7 +18,7 @@ import process from "node:process";
 import { readPayload } from "../../xcodex_hooks.mjs";
 
 function main() {
-  // Parse the event payload (handles stdin vs payload-path envelopes).
+  // Parse the event payload (handles stdin vs payload_path envelopes).
   const payload = readPayload();
 
   // Add your logic here. This template just logs the full payload.

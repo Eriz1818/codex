@@ -2,14 +2,14 @@
 
 This directory contains copy/pasteable hook scripts for `xcodex` (and upstream `codex`) hooks.
 
-Hooks are configured as argv arrays in `$CODEX_HOME/config.toml` under `[hooks]`. Codex writes event JSON to the hook program’s stdin. For large payloads, stdin contains a small JSON envelope with `payload-path`, which points to the full payload JSON.
+Hooks are configured as argv arrays in `$CODEX_HOME/config.toml` under `[hooks]`. Codex writes event JSON to the hook program’s stdin. For large payloads, stdin contains a small JSON envelope with `payload_path`, which points to the full payload JSON.
 
 ## Quickstart
 
 1. Install the Python hook helper into your Codex home:
 
 ```sh
-xcodex hooks install python
+xcodex hooks install sdks python
 ```
 
 2. Copy one or more scripts into your Codex home:

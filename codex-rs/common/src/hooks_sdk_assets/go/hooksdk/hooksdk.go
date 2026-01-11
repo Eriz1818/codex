@@ -2,9 +2,9 @@
 //
 // This Go code is installed under `$CODEX_HOME/hooks/templates/go/` by:
 //
-//   xcodex hooks install go
+//   xcodex hooks install sdks go
 //
-// It demonstrates how to correctly handle stdin vs the `payload-path` envelope
+// It demonstrates how to correctly handle stdin vs the `payload_path` envelope
 // used for large payloads.
 package hooksdk
 
@@ -17,13 +17,13 @@ import (
 type HookPayloadJSON map[string]any
 
 // ReadPayload reads the hook payload for an external hook invocation and parses it into a typed
-// payload struct (based on the `"type"` field).
+// payload struct.
 //
 // Input: reads stdin. For large payloads, stdin is a small JSON envelope that
-// contains `payload-path`, which points to the full JSON payload file.
+// contains `payload_path`, which points to the full JSON payload file.
 //
 // Output: returns the typed payload (and preserves the raw JSON object for forward compatibility).
-func ReadPayload() (HookPayload, error) {
+func ReadPayload() (*HookPayload, error) {
 	full, err := readFullPayloadBytes()
 	if err != nil {
 		return nil, err
@@ -62,14 +62,17 @@ func readFullPayloadBytes() ([]byte, error) {
 		return stdinBytes, nil
 	}
 
-	payloadPathAny, ok := envelope["payload-path"]
+	payloadPathAny, ok := envelope["payload_path"]
+	if !ok || payloadPathAny == nil {
+		payloadPathAny, ok = envelope["payload-path"]
+	}
 	if !ok || payloadPathAny == nil {
 		return stdinBytes, nil
 	}
 
 	payloadPath, ok := payloadPathAny.(string)
 	if !ok || payloadPath == "" {
-		return nil, errors.New("invalid payload-path")
+		return nil, errors.New("invalid payload_path")
 	}
 	return os.ReadFile(payloadPath)
 }

@@ -3,7 +3,7 @@
 // xCodex hooks kit: Go typed helpers for external hooks.
 //
 // This file is installed under `$CODEX_HOME/hooks/templates/go/` by:
-//   xcodex hooks install go
+//   xcodex hooks install sdks go
 //
 // Re-generate from the repo:
 //   cd codex-rs
@@ -15,357 +15,84 @@ import (
 	"encoding/json"
 )
 
-// HookPayload is implemented by all typed hook payload variants.
-// It also preserves the raw JSON object for forward compatibility.
-type HookPayload interface {
-	EventType() string
-	Raw() map[string]any
+// HookPayload models the JSON payload shape emitted by xcodex hooks.
+// Unknown fields are preserved in RawPayload for forward compatibility.
+type HookPayload struct {
+	RawPayload map[string]any `json:"-"`
+	ApprovalPolicy any `json:"approval_policy"`
+	Attempt *int `json:"attempt"`
+	CallId *string `json:"call_id"`
+	Command []string `json:"command"`
+	Cwd string `json:"cwd"`
+	DurationMs *int `json:"duration_ms"`
+	EventId string `json:"event_id"`
+	GrantRoot *string `json:"grant_root"`
+	HasOutputSchema *bool `json:"has_output_schema"`
+	HookEventName string `json:"hook_event_name"`
+	InputItemCount *int `json:"input_item_count"`
+	InputMessages []string `json:"input_messages"`
+	Kind *string `json:"kind"`
+	LastAssistantMessage *string `json:"last_assistant_message"`
+	Message *string `json:"message"`
+	Model *string `json:"model"`
+	ModelRequestId *string `json:"model_request_id"`
+	NeedsFollowUp *bool `json:"needs_follow_up"`
+	NotificationType *string `json:"notification_type"`
+	OutputBytes *int `json:"output_bytes"`
+	OutputPreview *string `json:"output_preview"`
+	ParallelToolCalls *bool `json:"parallel_tool_calls"`
+	Paths []string `json:"paths"`
+	PermissionMode string `json:"permission_mode"`
+	Prompt *string `json:"prompt"`
+	ProposedExecpolicyAmendment []string `json:"proposed_execpolicy_amendment"`
+	Provider *string `json:"provider"`
+	Reason *string `json:"reason"`
+	RequestId *string `json:"request_id"`
+	ResponseId *string `json:"response_id"`
+	SandboxPolicy any `json:"sandbox_policy"`
+	SchemaVersion int `json:"schema_version"`
+	ServerName *string `json:"server_name"`
+	SessionId string `json:"session_id"`
+	SessionSource *string `json:"session_source"`
+	Status *string `json:"status"`
+	Subagent *string `json:"subagent"`
+	Success *bool `json:"success"`
+	Timestamp string `json:"timestamp"`
+	Title *string `json:"title"`
+	TokenUsage any `json:"token_usage"`
+	ToolCount *int `json:"tool_count"`
+	ToolInput any `json:"tool_input"`
+	ToolName *string `json:"tool_name"`
+	ToolResponse any `json:"tool_response"`
+	ToolUseId *string `json:"tool_use_id"`
+	TranscriptPath string `json:"transcript_path"`
+	Trigger *string `json:"trigger"`
+	TurnId *string `json:"turn_id"`
+	XcodexEventType string `json:"xcodex_event_type"`
 }
 
-// HookPayloadBase are the common fields present in all hook payloads.
-type HookPayloadBase struct {
-	SchemaVersion uint32 `json:"schema-version"`
-	EventID       string `json:"event-id"`
-	Timestamp     string `json:"timestamp"`
-	Type          string `json:"type"`
+func (p *HookPayload) UnmarshalJSON(data []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	type Alias HookPayload
+	var a Alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+
+	*p = HookPayload(a)
+	p.RawPayload = raw
+	return nil
 }
 
-// ParseHookPayload parses a hook JSON payload into a typed struct based on its `type`.
-// Unknown event types are returned as *UnknownPayload.
-func ParseHookPayload(data []byte) (HookPayload, error) {
-	var base HookPayloadBase
-	if err := json.Unmarshal(data, &base); err != nil {
+// ParseHookPayload parses a hook JSON payload into a HookPayload.
+func ParseHookPayload(data []byte) (*HookPayload, error) {
+	var p HookPayload
+	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, err
 	}
-
-	switch base.Type {
-	case "agent-turn-complete":
-		var p AgentTurnCompletePayload
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		return &p, nil
-	case "approval-requested":
-		var p ApprovalRequestedPayload
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		return &p, nil
-	case "model-request-started":
-		var p ModelRequestStartedPayload
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		return &p, nil
-	case "model-response-completed":
-		var p ModelResponseCompletedPayload
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		return &p, nil
-	case "session-end":
-		var p SessionEndPayload
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		return &p, nil
-	case "session-start":
-		var p SessionStartPayload
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		return &p, nil
-	case "tool-call-finished":
-		var p ToolCallFinishedPayload
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		return &p, nil
-	case "tool-call-started":
-		var p ToolCallStartedPayload
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		return &p, nil
-
-	default:
-		var raw map[string]any
-		if err := json.Unmarshal(data, &raw); err != nil {
-			return nil, err
-		}
-		return &UnknownPayload{Base: base, RawPayload: raw}, nil
-	}
+	return &p, nil
 }
-
-// UnknownPayload is returned when the payload type is not recognized by this SDK version.
-type UnknownPayload struct {
-	Base       HookPayloadBase
-	RawPayload map[string]any
-}
-
-func (p *UnknownPayload) EventType() string { return p.Base.Type }
-func (p *UnknownPayload) Raw() map[string]any { return p.RawPayload }
-
-type ApprovalKind string
-
-const (
-	ApprovalKindExec ApprovalKind = "exec"
-	ApprovalKindApplyPatch ApprovalKind = "apply-patch"
-	ApprovalKindElicitation ApprovalKind = "elicitation"
-)
-
-type ToolCallStatus string
-
-const (
-	ToolCallStatusCompleted ToolCallStatus = "completed"
-	ToolCallStatusAborted ToolCallStatus = "aborted"
-)
-
-type AgentTurnCompletePayload struct {
-	Base HookPayloadBase
-	RawPayload map[string]any `json:"-"`
-	Cwd string `json:"cwd"`
-	InputMessages []string `json:"input-messages"`
-	LastAssistantMessage *string `json:"last-assistant-message"`
-	ThreadId string `json:"thread-id"`
-	TurnId string `json:"turn-id"`
-}
-
-func (p *AgentTurnCompletePayload) EventType() string { return p.Base.Type }
-func (p *AgentTurnCompletePayload) Raw() map[string]any { return p.RawPayload }
-
-func (p *AgentTurnCompletePayload) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	type alias AgentTurnCompletePayload
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*p = AgentTurnCompletePayload(a)
-	p.RawPayload = raw
-	return nil
-}
-
-type ApprovalRequestedPayload struct {
-	Base HookPayloadBase
-	RawPayload map[string]any `json:"-"`
-	ApprovalPolicy any `json:"approval-policy"`
-	CallId *string `json:"call-id"`
-	Command []string `json:"command"`
-	Cwd *string `json:"cwd"`
-	GrantRoot *string `json:"grant-root"`
-	Kind ApprovalKind `json:"kind"`
-	Message *string `json:"message"`
-	Paths []string `json:"paths"`
-	ProposedExecpolicyAmendment []string `json:"proposed-execpolicy-amendment"`
-	Reason *string `json:"reason"`
-	RequestId *string `json:"request-id"`
-	SandboxPolicy any `json:"sandbox-policy"`
-	ServerName *string `json:"server-name"`
-	ThreadId string `json:"thread-id"`
-	TurnId *string `json:"turn-id"`
-}
-
-func (p *ApprovalRequestedPayload) EventType() string { return p.Base.Type }
-func (p *ApprovalRequestedPayload) Raw() map[string]any { return p.RawPayload }
-
-func (p *ApprovalRequestedPayload) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	type alias ApprovalRequestedPayload
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*p = ApprovalRequestedPayload(a)
-	p.RawPayload = raw
-	return nil
-}
-
-type ModelRequestStartedPayload struct {
-	Base HookPayloadBase
-	RawPayload map[string]any `json:"-"`
-	Attempt int `json:"attempt"`
-	Cwd string `json:"cwd"`
-	HasOutputSchema bool `json:"has-output-schema"`
-	Model string `json:"model"`
-	ModelRequestId string `json:"model-request-id"`
-	ParallelToolCalls bool `json:"parallel-tool-calls"`
-	PromptInputItemCount int `json:"prompt-input-item-count"`
-	Provider string `json:"provider"`
-	ThreadId string `json:"thread-id"`
-	ToolCount int `json:"tool-count"`
-	TurnId string `json:"turn-id"`
-}
-
-func (p *ModelRequestStartedPayload) EventType() string { return p.Base.Type }
-func (p *ModelRequestStartedPayload) Raw() map[string]any { return p.RawPayload }
-
-func (p *ModelRequestStartedPayload) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	type alias ModelRequestStartedPayload
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*p = ModelRequestStartedPayload(a)
-	p.RawPayload = raw
-	return nil
-}
-
-type ModelResponseCompletedPayload struct {
-	Base HookPayloadBase
-	RawPayload map[string]any `json:"-"`
-	Attempt int `json:"attempt"`
-	Cwd string `json:"cwd"`
-	ModelRequestId string `json:"model-request-id"`
-	NeedsFollowUp bool `json:"needs-follow-up"`
-	ResponseId string `json:"response-id"`
-	ThreadId string `json:"thread-id"`
-	TokenUsage any `json:"token-usage"`
-	TurnId string `json:"turn-id"`
-}
-
-func (p *ModelResponseCompletedPayload) EventType() string { return p.Base.Type }
-func (p *ModelResponseCompletedPayload) Raw() map[string]any { return p.RawPayload }
-
-func (p *ModelResponseCompletedPayload) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	type alias ModelResponseCompletedPayload
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*p = ModelResponseCompletedPayload(a)
-	p.RawPayload = raw
-	return nil
-}
-
-type SessionEndPayload struct {
-	Base HookPayloadBase
-	RawPayload map[string]any `json:"-"`
-	Cwd string `json:"cwd"`
-	SessionSource string `json:"session-source"`
-	ThreadId string `json:"thread-id"`
-}
-
-func (p *SessionEndPayload) EventType() string { return p.Base.Type }
-func (p *SessionEndPayload) Raw() map[string]any { return p.RawPayload }
-
-func (p *SessionEndPayload) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	type alias SessionEndPayload
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*p = SessionEndPayload(a)
-	p.RawPayload = raw
-	return nil
-}
-
-type SessionStartPayload struct {
-	Base HookPayloadBase
-	RawPayload map[string]any `json:"-"`
-	Cwd string `json:"cwd"`
-	SessionSource string `json:"session-source"`
-	ThreadId string `json:"thread-id"`
-}
-
-func (p *SessionStartPayload) EventType() string { return p.Base.Type }
-func (p *SessionStartPayload) Raw() map[string]any { return p.RawPayload }
-
-func (p *SessionStartPayload) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	type alias SessionStartPayload
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*p = SessionStartPayload(a)
-	p.RawPayload = raw
-	return nil
-}
-
-type ToolCallFinishedPayload struct {
-	Base HookPayloadBase
-	RawPayload map[string]any `json:"-"`
-	Attempt int `json:"attempt"`
-	CallId string `json:"call-id"`
-	Cwd string `json:"cwd"`
-	DurationMs int `json:"duration-ms"`
-	ModelRequestId string `json:"model-request-id"`
-	OutputBytes int `json:"output-bytes"`
-	OutputPreview *string `json:"output-preview"`
-	Status ToolCallStatus `json:"status"`
-	Success bool `json:"success"`
-	ThreadId string `json:"thread-id"`
-	ToolName string `json:"tool-name"`
-	TurnId string `json:"turn-id"`
-}
-
-func (p *ToolCallFinishedPayload) EventType() string { return p.Base.Type }
-func (p *ToolCallFinishedPayload) Raw() map[string]any { return p.RawPayload }
-
-func (p *ToolCallFinishedPayload) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	type alias ToolCallFinishedPayload
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*p = ToolCallFinishedPayload(a)
-	p.RawPayload = raw
-	return nil
-}
-
-type ToolCallStartedPayload struct {
-	Base HookPayloadBase
-	RawPayload map[string]any `json:"-"`
-	Attempt int `json:"attempt"`
-	CallId string `json:"call-id"`
-	Cwd string `json:"cwd"`
-	ModelRequestId string `json:"model-request-id"`
-	ThreadId string `json:"thread-id"`
-	ToolName string `json:"tool-name"`
-	TurnId string `json:"turn-id"`
-}
-
-func (p *ToolCallStartedPayload) EventType() string { return p.Base.Type }
-func (p *ToolCallStartedPayload) Raw() map[string]any { return p.RawPayload }
-
-func (p *ToolCallStartedPayload) UnmarshalJSON(data []byte) error {
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	type alias ToolCallStartedPayload
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*p = ToolCallStartedPayload(a)
-	p.RawPayload = raw
-	return nil
-}
-

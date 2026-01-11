@@ -6,9 +6,9 @@ require "pathname"
 #
 # Install into `$CODEX_HOME/hooks/` with:
 #
-#   xcodex hooks install ruby
+#   xcodex hooks install sdks ruby
 #
-# Provides `XCodexHooks.read_payload`, which handles stdin vs the `payload-path`
+# Provides `XCodexHooks.read_payload`, which handles stdin vs the `payload_path`
 # envelope used for large payloads.
 #
 module XCodexHooks
@@ -24,7 +24,7 @@ module XCodexHooks
     raw = "{}" if raw.nil? || raw.empty?
 
     payload = JSON.parse(raw)
-    payload_path = payload["payload-path"]
+    payload_path = payload["payload_path"] || payload["payload-path"]
     if payload_path && !payload_path.empty?
       payload = JSON.parse(Pathname.new(payload_path).read)
     end

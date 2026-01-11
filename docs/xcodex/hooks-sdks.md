@@ -2,7 +2,7 @@
 
 These SDKs are small, optional helpers/templates for writing **external hooks** in various languages.
 
-They do **not** change how hooks run: external hooks are still executed as commands configured under `[hooks]` and receive event JSON on stdin (with `payload-path` envelopes for large payloads).
+They do **not** change how hooks run: external hooks are still executed as commands configured under `[hooks]` and receive event JSON on stdin (with `payload_path` envelopes for large payloads).
 
 The installed files are intentionally “readable first”: you should be able to open them in `$CODEX_HOME/hooks/` and understand the hook flow just by reading the comments/docstrings.
 
@@ -10,7 +10,7 @@ The installed files are intentionally “readable first”: you should be able t
 
 You do **not** need any published packages (PyPI / npm / crates.io / Maven Central) to use these SDKs.
 
-`xcodex hooks install ...` vendors the helpers/templates directly into `$CODEX_HOME/hooks/`.
+`xcodex hooks install sdks ...` vendors the helpers/templates directly into `$CODEX_HOME/hooks/`.
 
 Notes:
 - Script-based templates (Python/Node/Ruby) run as-is (you just need the language runtime installed).
@@ -28,32 +28,41 @@ Some SDKs are just single-file helpers (meant to be copied), while others are re
 Install SDK helpers into your active `CODEX_HOME`:
 
 ```sh
-xcodex hooks install --list
-xcodex hooks install python
-xcodex hooks install javascript
-xcodex hooks install typescript
-xcodex hooks install ruby
-xcodex hooks install go
-xcodex hooks install rust
-xcodex hooks install java
+xcodex hooks install sdks list
+xcodex hooks install sdks python
+xcodex hooks install sdks javascript
+xcodex hooks install sdks typescript
+xcodex hooks install sdks ruby
+xcodex hooks install sdks go
+xcodex hooks install sdks rust
+xcodex hooks install sdks java
 ```
 
 To install everything (or overwrite existing files), use:
 
 ```sh
-xcodex hooks install --all
-xcodex hooks install --all --force
+xcodex hooks install sdks all
+xcodex hooks install sdks all --force
 ```
 
 In the TUI / TUI2 you can also run:
 
 ```text
-/hooks install list
-/hooks install python
-/hooks install all --force
+/hooks install sdks list
+/hooks install sdks python --yes
+/hooks install sdks all --force --yes
 ```
 
-Note: `xcodex hooks init` scaffolds Python hook examples under `$CODEX_HOME/hooks/` and also installs the Python helper (`xcodex_hooks.py`) so the generated examples work out of the box.
+Note: `xcodex hooks init external` scaffolds external-hook Python examples under `$CODEX_HOME/hooks/` and installs the Python helper (`xcodex_hooks.py`) so the examples work out of the box.
+
+## Command summary
+
+- `xcodex hooks init external`
+- `xcodex hooks install sdks <sdk|all|list> [--dry-run] [--force] [--yes]`
+- `xcodex hooks install samples external [--dry-run] [--force] [--yes]`
+- `xcodex hooks doctor external`
+- `xcodex hooks test external [--timeout-seconds N] [--configured-only] [--event ...]`
+- `xcodex hooks paths`
 
 ## What gets installed
 
@@ -62,6 +71,15 @@ Files are written under:
 - `$CODEX_HOME/hooks/` (shared helpers like `xcodex_hooks.py`, `xcodex_hooks.mjs`, `xcodex_hooks.rb`)
 - `$CODEX_HOME/hooks/templates/` (ready-to-run templates, including Go/Rust/Java project skeletons)
 - `$CODEX_HOME/hooks/sdk/` (installed libraries used by some templates)
+
+## Where to keep your hook code
+
+External hooks are just commands configured under `[hooks]`. Your hook scripts/binaries can live anywhere.
+
+Recommendations:
+
+- Prefer **absolute paths** in `config.toml` so hooks work regardless of where you run `xcodex` from.
+- `$CODEX_HOME/hooks/` is a convenient place to keep personal hook scripts if you want everything self-contained (the SDK installer already puts templates/helpers there).
 
 Python-specific notes:
 - `xcodex_hooks.py` is the main helper (`read_payload()` and `read_payload_model()`).
@@ -91,13 +109,21 @@ tool_call_finished = [["python3", "/absolute/path/to/your_hook.py"]]
 
 For the full hooks contract (events + payloads), see `docs/xcodex/hooks.md` and `docs/config.md#hooks`.
 
+## Testing before running a session
+
+To exercise your configured external hook commands with synthetic events (without starting a real session), run:
+
+```sh
+xcodex hooks test external
+```
+
 ## Toward “fully typed” SDKs
 
-Today’s SDK installers focus on the most error-prone part of hook authoring: correctly handling stdin vs the `payload-path` envelope.
+Today’s SDK installers focus on the most error-prone part of hook authoring: correctly handling stdin vs the `payload_path` envelope.
 
 To make the SDKs *fully typed* across languages, we should:
 
-1) Define a single “payload contract” document and compatibility policy (forward-compatible parsing, unknown fields, how `schema-version` evolves).
+1) Define a single “payload contract” document and compatibility policy (forward-compatible parsing, unknown fields, how `schema_version` evolves).
 2) Generate a machine-readable schema from the Rust source-of-truth (`codex_core::hooks::{HookPayload, HookNotification, ...}`), e.g. JSON Schema.
 3) Generate language-specific types (TS `.d.ts`, Python TypedDicts, Go structs, etc.) from that schema, and keep generation in CI.
 
@@ -111,9 +137,9 @@ The compatibility policy for external hook payloads is documented in:
 
 If you’re writing hooks or SDKs, that section is the source of truth for:
 
-- What `schema-version` means (and when it bumps)
+- What `schema_version` means (and when it bumps)
 - How unknown fields / unknown event types must be handled
-- Why `payload-path` is treated as a transport envelope detail (SDK responsibility)
+- Why `payload_path` is treated as a transport envelope detail (SDK responsibility)
 
 ### Machine-readable schema
 
@@ -128,7 +154,7 @@ cd codex-rs
 cargo run -p codex-core --bin hooks_schema --features hooks-schema --quiet > ../docs/xcodex/hooks.schema.json
 ```
 
-The TypeScript `.d.ts` installed by `xcodex hooks install {javascript,typescript}` is also generated from the Rust source of truth:
+The TypeScript `.d.ts` installed by `xcodex hooks install sdks {javascript,typescript}` is also generated from the Rust source of truth:
 
 ```sh
 cd codex-rs
@@ -157,4 +183,19 @@ Go types are generated too:
 cd codex-rs
 cargo run -p codex-core --bin hooks_go_types --features hooks-schema --quiet \
   > common/src/hooks_sdk_assets/go/hooksdk/types.go
+```
+
+## Contributor checks
+
+```sh
+cd codex-rs
+cargo test -p codex-cli --test hooks
+just hooks-codegen-check
+```
+
+Optional (requires Docker):
+
+```sh
+cd codex-rs
+just hooks-templates-smoke
 ```

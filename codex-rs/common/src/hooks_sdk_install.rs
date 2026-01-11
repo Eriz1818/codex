@@ -7,8 +7,8 @@ use std::path::PathBuf;
 /// Shared installer for the xCodex hooks kit.
 ///
 /// This module is used by:
-/// - `xcodex hooks install ...` (headless-friendly)
-/// - `/hooks install ...` inside the TUI/TUI2 (convenience wrapper)
+/// - `xcodex hooks install sdks ...` (headless-friendly)
+/// - `/hooks install sdks ...` inside the TUI/TUI2 (convenience wrapper)
 ///
 /// The installer vendors small helper files and templates into `$CODEX_HOME/hooks/`,
 /// so hook authors can start from readable, well-commented examples without
@@ -109,11 +109,72 @@ pub struct InstallReport {
     pub skipped: Vec<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlannedInstallAction {
+    Create,
+    Overwrite,
+    SkipExisting,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlannedInstallFile {
+    pub path: PathBuf,
+    pub action: PlannedInstallAction,
+    pub executable: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct InstallPlan {
+    pub codex_home: PathBuf,
+    pub hooks_dir: PathBuf,
+    pub files: Vec<PlannedInstallFile>,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct Asset {
     rel_path: &'static str,
     content: &'static str,
     executable: bool,
+}
+
+pub fn plan_install_hook_sdks(
+    codex_home: &Path,
+    targets: &[HookSdk],
+    force: bool,
+) -> io::Result<InstallPlan> {
+    let hooks_dir = codex_home.join("hooks");
+
+    let mut assets: BTreeMap<&'static str, Asset> = BTreeMap::new();
+    for sdk in targets {
+        for asset in assets_for(*sdk) {
+            assets.insert(asset.rel_path, asset);
+        }
+    }
+
+    let mut files = Vec::new();
+    for (_rel, asset) in assets {
+        let path = hooks_dir.join(asset.rel_path);
+        let action = if path.exists() {
+            if force {
+                PlannedInstallAction::Overwrite
+            } else {
+                PlannedInstallAction::SkipExisting
+            }
+        } else {
+            PlannedInstallAction::Create
+        };
+        files.push(PlannedInstallFile {
+            path,
+            action,
+            executable: asset.executable,
+        });
+    }
+
+    Ok(InstallPlan {
+        codex_home: codex_home.to_path_buf(),
+        hooks_dir,
+        files,
+    })
 }
 
 pub fn install_hook_sdks(
@@ -161,6 +222,32 @@ pub fn install_hook_sdks(
         wrote,
         skipped,
     })
+}
+
+pub fn format_install_plan(plan: &InstallPlan) -> io::Result<String> {
+    fn describe(action: PlannedInstallAction) -> &'static str {
+        match action {
+            PlannedInstallAction::Create => "create",
+            PlannedInstallAction::Overwrite => "overwrite",
+            PlannedInstallAction::SkipExisting => "skip (exists)",
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("CODEX_HOME: {}\n", plan.codex_home.display()));
+    out.push_str(&format!("Hooks dir: {}\n", plan.hooks_dir.display()));
+    out.push('\n');
+    out.push_str("Planned changes:\n");
+    for file in &plan.files {
+        let exec = if file.executable { " (executable)" } else { "" };
+        out.push_str(&format!(
+            "- {}: {}{}\n",
+            describe(file.action),
+            file.path.display(),
+            exec
+        ));
+    }
+    Ok(out)
 }
 
 #[cfg(unix)]
@@ -513,12 +600,12 @@ mod tests {
 
         let payload_path = codex_home.join("payload.json");
         let full_payload = format!(
-            "{{\"schema-version\":1,\"type\":\"tool-call-finished\",\"{marker_key}\":\"{marker_value}\"}}"
+            "{{\"schema_version\":1,\"event_id\":\"e\",\"timestamp\":\"t\",\"session_id\":\"th\",\"transcript_path\":\"\",\"permission_mode\":\"default\",\"hook_event_name\":\"SessionStart\",\"xcodex_event_type\":\"session-start\",\"cwd\":\"/tmp\",\"{marker_key}\":\"{marker_value}\"}}"
         );
         std::fs::write(&payload_path, full_payload)?;
 
         let payload_path_json = escape_json_string(payload_path.to_string_lossy().as_ref());
-        let envelope = format!("{{\"payload-path\":\"{payload_path_json}\"}}");
+        let envelope = format!("{{\"payload_path\":\"{payload_path_json}\"}}");
 
         let hooks_jsonl = codex_home.join("hooks.jsonl");
         assert!(!hooks_jsonl.exists());
@@ -660,7 +747,7 @@ mod tests {
         let hooks_dir = home.path().join("hooks");
         let output = Command::new("python3")
             .arg("-c")
-            .arg("import xcodex_hooks_models; xcodex_hooks_models.parse_hook_event({'schema-version':1,'event-id':'e','timestamp':'t','type':'session-start','thread-id':'th','cwd':'/tmp','session-source':'exec'})")
+            .arg("import xcodex_hooks_models; xcodex_hooks_models.parse_hook_payload({'schema_version':1,'event_id':'e','timestamp':'t','session_id':'th','transcript_path':'','permission_mode':'default','hook_event_name':'SessionStart','xcodex_event_type':'session-start','cwd':'/tmp'})")
             .env("PYTHONPATH", &hooks_dir)
             .stdin(Stdio::null())
             .output()?;
@@ -688,7 +775,7 @@ mod tests {
         let host_path = hooks_dir.join("host/python/host.py");
         let example_path = hooks_dir.join("host/python/example_hook.py");
 
-        let input = r#"{"schema-version":1,"type":"hook-event","seq":1,"event":{"schema-version":1,"type":"tool-call-finished","event-id":"e","timestamp":"t","thread-id":"th","turn-id":"tu","cwd":"/tmp","model-request-id":"m","attempt":1,"tool-name":"exec","call-id":"c","status":"completed","duration-ms":1,"success":true,"output-bytes":0}}"#;
+        let input = r#"{"schema_version":1,"type":"hook-event","seq":1,"event":{"schema_version":1,"event_id":"e","timestamp":"t","session_id":"th","transcript_path":"","permission_mode":"default","hook_event_name":"PostToolUse","xcodex_event_type":"tool-call-finished","turn_id":"tu","cwd":"/tmp","tool_name":"Bash","tool_use_id":"c","tool_response":null,"status":"completed","duration_ms":1,"success":true,"output_bytes":0}}"#;
 
         let mut child = Command::new("python3")
             .arg("-u")
@@ -713,7 +800,7 @@ mod tests {
 
         let out_path = home.path().join("hooks-host-tool-calls.log");
         let contents = std::fs::read_to_string(out_path)?;
-        assert!(contents.contains("tool=exec"));
+        assert!(contents.contains("tool=Bash"));
         Ok(())
     }
 

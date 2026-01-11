@@ -5,7 +5,7 @@ xCodex hooks kit: Python runtime models for external hooks.
 
 This file is generated from the Rust hook payload schema (source-of-truth).
 It is installed into `$CODEX_HOME/hooks/` by:
-  - `xcodex hooks install python`
+  - `xcodex hooks install sdks python`
 
 Re-generate from the repo:
   cd codex-rs
@@ -19,40 +19,10 @@ This module is intentionally dependency-free (no pydantic). It aims to provide:
 Docs:
 - Hooks overview: docs/xcodex/hooks.md
 - Machine-readable schema: docs/xcodex/hooks.schema.json
-- Compatibility policy: docs/xcodex/hooks.md (Compatibility policy)
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Union, Literal
-
-
-@dataclass
-class HookEventBase:
-    schema_version: int
-    event_id: str
-    timestamp: str
-    event_type: str
-
-    raw: Dict[str, Any]
-    extras: Dict[str, Any]
-
-
-@dataclass
-class UnknownHookEvent(HookEventBase):
-    pass
-
-
-HookEvent = Union[
-    UnknownHookEvent,
-    "AgentTurnCompleteHookEvent",
-    "ApprovalRequestedHookEvent",
-    "ModelRequestStartedHookEvent",
-    "ModelResponseCompletedHookEvent",
-    "SessionEndHookEvent",
-    "SessionStartHookEvent",
-    "ToolCallFinishedHookEvent",
-    "ToolCallStartedHookEvent",
-]
+from typing import Any, Dict, List, Mapping, Optional
 
 
 def _as_str(value: Any) -> Optional[str]:
@@ -112,273 +82,171 @@ def _as_str_list(value: Any) -> Optional[List[str]]:
     return None
 
 
-def _as_any_list(value: Any) -> Optional[List[Any]]:
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return value
-    return None
-
 @dataclass
-class AgentTurnCompleteHookEvent(HookEventBase):
-    event_type: Literal["agent-turn-complete"]
-    cwd: Optional[str] = None
-    input_messages: Optional[List[str]] = None
-    last_assistant_message: Optional[str] = None
-    thread_id: Optional[str] = None
-    turn_id: Optional[str] = None
-
-@dataclass
-class ApprovalRequestedHookEvent(HookEventBase):
-    event_type: Literal["approval-requested"]
+class HookPayload:
+    cwd: str
+    event_id: str
+    hook_event_name: str
+    permission_mode: str
+    schema_version: int
+    session_id: str
+    timestamp: str
+    transcript_path: str
+    xcodex_event_type: str
     approval_policy: Optional[Any] = None
-    call_id: Optional[str] = None
-    command: Optional[List[str]] = None
-    cwd: Optional[str] = None
-    grant_root: Optional[str] = None
-    kind: Optional[str] = None
-    message: Optional[str] = None
-    paths: Optional[List[str]] = None
-    proposed_execpolicy_amendment: Optional[List[str]] = None
-    reason: Optional[str] = None
-    request_id: Optional[str] = None
+    attempt: Optional[Any] = None
+    call_id: Optional[Any] = None
+    command: Optional[Any] = None
+    duration_ms: Optional[Any] = None
+    grant_root: Optional[Any] = None
+    has_output_schema: Optional[Any] = None
+    input_item_count: Optional[Any] = None
+    input_messages: Optional[Any] = None
+    kind: Optional[Any] = None
+    last_assistant_message: Optional[Any] = None
+    message: Optional[Any] = None
+    model: Optional[Any] = None
+    model_request_id: Optional[Any] = None
+    needs_follow_up: Optional[Any] = None
+    notification_type: Optional[Any] = None
+    output_bytes: Optional[Any] = None
+    output_preview: Optional[Any] = None
+    parallel_tool_calls: Optional[Any] = None
+    paths: Optional[Any] = None
+    prompt: Optional[Any] = None
+    proposed_execpolicy_amendment: Optional[Any] = None
+    provider: Optional[Any] = None
+    reason: Optional[Any] = None
+    request_id: Optional[Any] = None
+    response_id: Optional[Any] = None
     sandbox_policy: Optional[Any] = None
-    server_name: Optional[str] = None
-    thread_id: Optional[str] = None
-    turn_id: Optional[str] = None
-
-@dataclass
-class ModelRequestStartedHookEvent(HookEventBase):
-    event_type: Literal["model-request-started"]
-    attempt: Optional[int] = None
-    cwd: Optional[str] = None
-    has_output_schema: Optional[bool] = None
-    model: Optional[str] = None
-    model_request_id: Optional[str] = None
-    parallel_tool_calls: Optional[bool] = None
-    prompt_input_item_count: Optional[int] = None
-    provider: Optional[str] = None
-    thread_id: Optional[str] = None
-    tool_count: Optional[int] = None
-    turn_id: Optional[str] = None
-
-@dataclass
-class ModelResponseCompletedHookEvent(HookEventBase):
-    event_type: Literal["model-response-completed"]
-    attempt: Optional[int] = None
-    cwd: Optional[str] = None
-    model_request_id: Optional[str] = None
-    needs_follow_up: Optional[bool] = None
-    response_id: Optional[str] = None
-    thread_id: Optional[str] = None
+    server_name: Optional[Any] = None
+    session_source: Optional[Any] = None
+    status: Optional[Any] = None
+    subagent: Optional[Any] = None
+    success: Optional[Any] = None
+    title: Optional[Any] = None
     token_usage: Optional[Any] = None
-    turn_id: Optional[str] = None
+    tool_count: Optional[Any] = None
+    tool_input: Optional[Any] = None
+    tool_name: Optional[Any] = None
+    tool_response: Optional[Any] = None
+    tool_use_id: Optional[Any] = None
+    trigger: Optional[Any] = None
+    turn_id: Optional[Any] = None
 
-@dataclass
-class SessionEndHookEvent(HookEventBase):
-    event_type: Literal["session-end"]
-    cwd: Optional[str] = None
-    session_source: Optional[str] = None
-    thread_id: Optional[str] = None
 
-@dataclass
-class SessionStartHookEvent(HookEventBase):
-    event_type: Literal["session-start"]
-    cwd: Optional[str] = None
-    session_source: Optional[str] = None
-    thread_id: Optional[str] = None
+    raw: Dict[str, Any] = None  # type: ignore[assignment]
+    extras: Dict[str, Any] = None  # type: ignore[assignment]
 
-@dataclass
-class ToolCallFinishedHookEvent(HookEventBase):
-    event_type: Literal["tool-call-finished"]
-    attempt: Optional[int] = None
-    call_id: Optional[str] = None
-    cwd: Optional[str] = None
-    duration_ms: Optional[int] = None
-    model_request_id: Optional[str] = None
-    output_bytes: Optional[int] = None
-    output_preview: Optional[str] = None
-    status: Optional[str] = None
-    success: Optional[bool] = None
-    thread_id: Optional[str] = None
-    tool_name: Optional[str] = None
-    turn_id: Optional[str] = None
 
-@dataclass
-class ToolCallStartedHookEvent(HookEventBase):
-    event_type: Literal["tool-call-started"]
-    attempt: Optional[int] = None
-    call_id: Optional[str] = None
-    cwd: Optional[str] = None
-    model_request_id: Optional[str] = None
-    thread_id: Optional[str] = None
-    tool_name: Optional[str] = None
-    turn_id: Optional[str] = None
-
-def parse_hook_event(payload: Mapping[str, Any]) -> HookEvent:
-    """
-    Parse a raw hook payload dict into a dataclass model.
-
-    This is tolerant by design:
-    - unknown event types return UnknownHookEvent
-    - unknown fields are preserved under `.extras` and `.raw`
-    """
-    schema_version = int(payload.get("schema-version") or 0)
-    event_id = str(payload.get("event-id") or "")
-    timestamp = str(payload.get("timestamp") or "")
-    event_type = str(payload.get("type") or "")
-
+def parse_hook_payload(payload: Mapping[str, Any]) -> HookPayload:
     raw = dict(payload)
-    base_known = {"schema-version", "event-id", "timestamp", "type"}
+    known = {
+        "approval_policy",
+        "attempt",
+        "call_id",
+        "command",
+        "cwd",
+        "duration_ms",
+        "event_id",
+        "grant_root",
+        "has_output_schema",
+        "hook_event_name",
+        "input_item_count",
+        "input_messages",
+        "kind",
+        "last_assistant_message",
+        "message",
+        "model",
+        "model_request_id",
+        "needs_follow_up",
+        "notification_type",
+        "output_bytes",
+        "output_preview",
+        "parallel_tool_calls",
+        "paths",
+        "permission_mode",
+        "prompt",
+        "proposed_execpolicy_amendment",
+        "provider",
+        "reason",
+        "request_id",
+        "response_id",
+        "sandbox_policy",
+        "schema_version",
+        "server_name",
+        "session_id",
+        "session_source",
+        "status",
+        "subagent",
+        "success",
+        "timestamp",
+        "title",
+        "token_usage",
+        "tool_count",
+        "tool_input",
+        "tool_name",
+        "tool_response",
+        "tool_use_id",
+        "transcript_path",
+        "trigger",
+        "turn_id",
+        "xcodex_event_type",
+    }
+    extras = {k: v for (k, v) in raw.items() if k not in known}
 
-    def extras_for(known: set[str]) -> Dict[str, Any]:
-        return {k: v for k, v in raw.items() if k not in known}
-
-    if event_type == "":
-        return UnknownHookEvent(schema_version, event_id, timestamp, event_type, raw, extras_for(base_known))
-
-    if event_type == "agent-turn-complete":
-        return AgentTurnCompleteHookEvent(
-            schema_version=schema_version,
-            event_id=event_id,
-            timestamp=timestamp,
-            event_type="agent-turn-complete",
-            raw=raw,
-            extras=extras_for({"cwd", "event-id", "input-messages", "last-assistant-message", "schema-version", "thread-id", "timestamp", "turn-id", "type"}),
-            cwd=_as_str(payload.get("cwd")),
-            input_messages=_as_str_list(payload.get("input-messages")),
-            last_assistant_message=_as_str(payload.get("last-assistant-message")),
-            thread_id=_as_str(payload.get("thread-id")),
-            turn_id=_as_str(payload.get("turn-id")),
-        )
-
-    if event_type == "approval-requested":
-        return ApprovalRequestedHookEvent(
-            schema_version=schema_version,
-            event_id=event_id,
-            timestamp=timestamp,
-            event_type="approval-requested",
-            raw=raw,
-            extras=extras_for({"approval-policy", "call-id", "command", "cwd", "event-id", "grant-root", "kind", "message", "paths", "proposed-execpolicy-amendment", "reason", "request-id", "sandbox-policy", "schema-version", "server-name", "thread-id", "timestamp", "turn-id", "type"}),
-            approval_policy=payload.get("approval-policy"),
-            call_id=_as_str(payload.get("call-id")),
-            command=_as_str_list(payload.get("command")),
-            cwd=_as_str(payload.get("cwd")),
-            grant_root=_as_str(payload.get("grant-root")),
-            kind=_as_str(payload.get("kind")),
-            message=_as_str(payload.get("message")),
-            paths=_as_str_list(payload.get("paths")),
-            proposed_execpolicy_amendment=_as_str_list(payload.get("proposed-execpolicy-amendment")),
-            reason=_as_str(payload.get("reason")),
-            request_id=_as_str(payload.get("request-id")),
-            sandbox_policy=payload.get("sandbox-policy"),
-            server_name=_as_str(payload.get("server-name")),
-            thread_id=_as_str(payload.get("thread-id")),
-            turn_id=_as_str(payload.get("turn-id")),
-        )
-
-    if event_type == "model-request-started":
-        return ModelRequestStartedHookEvent(
-            schema_version=schema_version,
-            event_id=event_id,
-            timestamp=timestamp,
-            event_type="model-request-started",
-            raw=raw,
-            extras=extras_for({"attempt", "cwd", "event-id", "has-output-schema", "model", "model-request-id", "parallel-tool-calls", "prompt-input-item-count", "provider", "schema-version", "thread-id", "timestamp", "tool-count", "turn-id", "type"}),
-            attempt=_as_int(payload.get("attempt")),
-            cwd=_as_str(payload.get("cwd")),
-            has_output_schema=_as_bool(payload.get("has-output-schema")),
-            model=_as_str(payload.get("model")),
-            model_request_id=_as_str(payload.get("model-request-id")),
-            parallel_tool_calls=_as_bool(payload.get("parallel-tool-calls")),
-            prompt_input_item_count=_as_int(payload.get("prompt-input-item-count")),
-            provider=_as_str(payload.get("provider")),
-            thread_id=_as_str(payload.get("thread-id")),
-            tool_count=_as_int(payload.get("tool-count")),
-            turn_id=_as_str(payload.get("turn-id")),
-        )
-
-    if event_type == "model-response-completed":
-        return ModelResponseCompletedHookEvent(
-            schema_version=schema_version,
-            event_id=event_id,
-            timestamp=timestamp,
-            event_type="model-response-completed",
-            raw=raw,
-            extras=extras_for({"attempt", "cwd", "event-id", "model-request-id", "needs-follow-up", "response-id", "schema-version", "thread-id", "timestamp", "token-usage", "turn-id", "type"}),
-            attempt=_as_int(payload.get("attempt")),
-            cwd=_as_str(payload.get("cwd")),
-            model_request_id=_as_str(payload.get("model-request-id")),
-            needs_follow_up=_as_bool(payload.get("needs-follow-up")),
-            response_id=_as_str(payload.get("response-id")),
-            thread_id=_as_str(payload.get("thread-id")),
-            token_usage=payload.get("token-usage"),
-            turn_id=_as_str(payload.get("turn-id")),
-        )
-
-    if event_type == "session-end":
-        return SessionEndHookEvent(
-            schema_version=schema_version,
-            event_id=event_id,
-            timestamp=timestamp,
-            event_type="session-end",
-            raw=raw,
-            extras=extras_for({"cwd", "event-id", "schema-version", "session-source", "thread-id", "timestamp", "type"}),
-            cwd=_as_str(payload.get("cwd")),
-            session_source=_as_str(payload.get("session-source")),
-            thread_id=_as_str(payload.get("thread-id")),
-        )
-
-    if event_type == "session-start":
-        return SessionStartHookEvent(
-            schema_version=schema_version,
-            event_id=event_id,
-            timestamp=timestamp,
-            event_type="session-start",
-            raw=raw,
-            extras=extras_for({"cwd", "event-id", "schema-version", "session-source", "thread-id", "timestamp", "type"}),
-            cwd=_as_str(payload.get("cwd")),
-            session_source=_as_str(payload.get("session-source")),
-            thread_id=_as_str(payload.get("thread-id")),
-        )
-
-    if event_type == "tool-call-finished":
-        return ToolCallFinishedHookEvent(
-            schema_version=schema_version,
-            event_id=event_id,
-            timestamp=timestamp,
-            event_type="tool-call-finished",
-            raw=raw,
-            extras=extras_for({"attempt", "call-id", "cwd", "duration-ms", "event-id", "model-request-id", "output-bytes", "output-preview", "schema-version", "status", "success", "thread-id", "timestamp", "tool-name", "turn-id", "type"}),
-            attempt=_as_int(payload.get("attempt")),
-            call_id=_as_str(payload.get("call-id")),
-            cwd=_as_str(payload.get("cwd")),
-            duration_ms=_as_int(payload.get("duration-ms")),
-            model_request_id=_as_str(payload.get("model-request-id")),
-            output_bytes=_as_int(payload.get("output-bytes")),
-            output_preview=_as_str(payload.get("output-preview")),
-            status=_as_str(payload.get("status")),
-            success=_as_bool(payload.get("success")),
-            thread_id=_as_str(payload.get("thread-id")),
-            tool_name=_as_str(payload.get("tool-name")),
-            turn_id=_as_str(payload.get("turn-id")),
-        )
-
-    if event_type == "tool-call-started":
-        return ToolCallStartedHookEvent(
-            schema_version=schema_version,
-            event_id=event_id,
-            timestamp=timestamp,
-            event_type="tool-call-started",
-            raw=raw,
-            extras=extras_for({"attempt", "call-id", "cwd", "event-id", "model-request-id", "schema-version", "thread-id", "timestamp", "tool-name", "turn-id", "type"}),
-            attempt=_as_int(payload.get("attempt")),
-            call_id=_as_str(payload.get("call-id")),
-            cwd=_as_str(payload.get("cwd")),
-            model_request_id=_as_str(payload.get("model-request-id")),
-            thread_id=_as_str(payload.get("thread-id")),
-            tool_name=_as_str(payload.get("tool-name")),
-            turn_id=_as_str(payload.get("turn-id")),
-        )
-
-    return UnknownHookEvent(schema_version, event_id, timestamp, event_type, raw, extras_for(base_known | {"type"}))
+    return HookPayload(
+        approval_policy=lambda x: x(raw.get("approval_policy")),
+        attempt=lambda x: x(raw.get("attempt")),
+        call_id=lambda x: x(raw.get("call_id")),
+        command=lambda x: x(raw.get("command")),
+        cwd=_as_str(raw.get("cwd")),
+        duration_ms=lambda x: x(raw.get("duration_ms")),
+        event_id=_as_str(raw.get("event_id")),
+        grant_root=lambda x: x(raw.get("grant_root")),
+        has_output_schema=lambda x: x(raw.get("has_output_schema")),
+        hook_event_name=_as_str(raw.get("hook_event_name")),
+        input_item_count=lambda x: x(raw.get("input_item_count")),
+        input_messages=lambda x: x(raw.get("input_messages")),
+        kind=lambda x: x(raw.get("kind")),
+        last_assistant_message=lambda x: x(raw.get("last_assistant_message")),
+        message=lambda x: x(raw.get("message")),
+        model=lambda x: x(raw.get("model")),
+        model_request_id=lambda x: x(raw.get("model_request_id")),
+        needs_follow_up=lambda x: x(raw.get("needs_follow_up")),
+        notification_type=lambda x: x(raw.get("notification_type")),
+        output_bytes=lambda x: x(raw.get("output_bytes")),
+        output_preview=lambda x: x(raw.get("output_preview")),
+        parallel_tool_calls=lambda x: x(raw.get("parallel_tool_calls")),
+        paths=lambda x: x(raw.get("paths")),
+        permission_mode=_as_str(raw.get("permission_mode")),
+        prompt=lambda x: x(raw.get("prompt")),
+        proposed_execpolicy_amendment=lambda x: x(raw.get("proposed_execpolicy_amendment")),
+        provider=lambda x: x(raw.get("provider")),
+        reason=lambda x: x(raw.get("reason")),
+        request_id=lambda x: x(raw.get("request_id")),
+        response_id=lambda x: x(raw.get("response_id")),
+        sandbox_policy=lambda x: x(raw.get("sandbox_policy")),
+        schema_version=_as_int(raw.get("schema_version")),
+        server_name=lambda x: x(raw.get("server_name")),
+        session_id=_as_str(raw.get("session_id")),
+        session_source=lambda x: x(raw.get("session_source")),
+        status=lambda x: x(raw.get("status")),
+        subagent=lambda x: x(raw.get("subagent")),
+        success=lambda x: x(raw.get("success")),
+        timestamp=_as_str(raw.get("timestamp")),
+        title=lambda x: x(raw.get("title")),
+        token_usage=lambda x: x(raw.get("token_usage")),
+        tool_count=lambda x: x(raw.get("tool_count")),
+        tool_input=lambda x: x(raw.get("tool_input")),
+        tool_name=lambda x: x(raw.get("tool_name")),
+        tool_response=lambda x: x(raw.get("tool_response")),
+        tool_use_id=lambda x: x(raw.get("tool_use_id")),
+        transcript_path=_as_str(raw.get("transcript_path")),
+        trigger=lambda x: x(raw.get("trigger")),
+        turn_id=lambda x: x(raw.get("turn_id")),
+        xcodex_event_type=_as_str(raw.get("xcodex_event_type")),
+        raw=raw,
+        extras=extras,
+    )

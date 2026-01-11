@@ -5,7 +5,7 @@ xCodex hooks kit: Python typed helpers for external hooks.
 
 This file is generated from the Rust hook payload schema (source-of-truth).
 It is installed into `$CODEX_HOME/hooks/` by:
-- `xcodex hooks install python`
+- `xcodex hooks install sdks python`
 
 Re-generate from the repo:
 cd codex-rs
@@ -31,158 +31,60 @@ else:
 
     Required = NotRequired = _Req  # type: ignore
 
-ApprovalKind = Union[Literal["apply-patch"], Literal["elicitation"], Literal["exec"]]
-
-ToolCallStatus = Union[Literal["aborted"], Literal["completed"]]
-
-HookPayloadBase = TypedDict(
-"HookPayloadBase",
-{
-"schema-version": Required[int],
-"event-id": Required[str],
-"timestamp": Required[str],
-},
-total=False,
-)
-
-AgentTurnCompletePayload = TypedDict(
-    "AgentTurnCompletePayload",
+HookPayload = TypedDict(
+    "HookPayload",
     {
-        "type": Required[Literal["agent-turn-complete"]],
-        "cwd": Required[str],
-        "input-messages": Required[List[str]],
-        "last-assistant-message": NotRequired[Union[None, str]],
-        "thread-id": Required[str],
-        "turn-id": Required[str],
-    },
-    total=False,
-)
-
-ApprovalRequestedPayload = TypedDict(
-    "ApprovalRequestedPayload",
-    {
-        "type": Required[Literal["approval-requested"]],
-        "approval-policy": NotRequired[Union[None, Union[Literal["never"], Literal["on-failure"], Literal["on-request"], Literal["untrusted"]]]],
-        "call-id": NotRequired[Union[None, str]],
+        "approval_policy": NotRequired[Union[None, Union[Literal["never"], Literal["on-failure"], Literal["on-request"], Literal["untrusted"]]]],
+        "attempt": NotRequired[Union[None, int]],
+        "call_id": NotRequired[Union[None, str]],
         "command": NotRequired[Union[List[str], None]],
-        "cwd": NotRequired[Union[None, str]],
-        "grant-root": NotRequired[Union[None, str]],
-        "kind": Required[ApprovalKind],
+        "cwd": Required[str],
+        "duration_ms": NotRequired[Union[None, int]],
+        "event_id": Required[str],
+        "grant_root": NotRequired[Union[None, str]],
+        "has_output_schema": NotRequired[Union[None, bool]],
+        "hook_event_name": Required[str],
+        "input_item_count": NotRequired[Union[None, int]],
+        "input_messages": NotRequired[Union[List[str], None]],
+        "kind": NotRequired[Union[None, str]],
+        "last_assistant_message": NotRequired[Union[None, str]],
         "message": NotRequired[Union[None, str]],
+        "model": NotRequired[Union[None, str]],
+        "model_request_id": NotRequired[Union[None, str]],
+        "needs_follow_up": NotRequired[Union[None, bool]],
+        "notification_type": NotRequired[Union[None, str]],
+        "output_bytes": NotRequired[Union[None, int]],
+        "output_preview": NotRequired[Union[None, str]],
+        "parallel_tool_calls": NotRequired[Union[None, bool]],
         "paths": NotRequired[Union[List[str], None]],
-        "proposed-execpolicy-amendment": NotRequired[Union[List[str], None]],
+        "permission_mode": Required[str],
+        "prompt": NotRequired[Union[None, str]],
+        "proposed_execpolicy_amendment": NotRequired[Union[List[str], None]],
+        "provider": NotRequired[Union[None, str]],
         "reason": NotRequired[Union[None, str]],
-        "request-id": NotRequired[Union[None, str]],
-        "sandbox-policy": NotRequired[Union[Any, None]],
-        "server-name": NotRequired[Union[None, str]],
-        "thread-id": Required[str],
-        "turn-id": NotRequired[Union[None, str]],
+        "request_id": NotRequired[Union[None, str]],
+        "response_id": NotRequired[Union[None, str]],
+        "sandbox_policy": NotRequired[Union[Any, None]],
+        "schema_version": Required[int],
+        "server_name": NotRequired[Union[None, str]],
+        "session_id": Required[str],
+        "session_source": NotRequired[Union[None, str]],
+        "status": NotRequired[Union[None, str]],
+        "subagent": NotRequired[Union[None, str]],
+        "success": NotRequired[Union[None, bool]],
+        "timestamp": Required[str],
+        "title": NotRequired[Union[None, str]],
+        "token_usage": NotRequired[Union[Any, None]],
+        "tool_count": NotRequired[Union[None, int]],
+        "tool_input": NotRequired[Any],
+        "tool_name": NotRequired[Union[None, str]],
+        "tool_response": NotRequired[Any],
+        "tool_use_id": NotRequired[Union[None, str]],
+        "transcript_path": Required[str],
+        "trigger": NotRequired[Union[None, str]],
+        "turn_id": NotRequired[Union[None, str]],
+        "xcodex_event_type": Required[str],
     },
     total=False,
 )
-
-ModelRequestStartedPayload = TypedDict(
-    "ModelRequestStartedPayload",
-    {
-        "type": Required[Literal["model-request-started"]],
-        "attempt": Required[int],
-        "cwd": Required[str],
-        "has-output-schema": Required[bool],
-        "model": Required[str],
-        "model-request-id": Required[str],
-        "parallel-tool-calls": Required[bool],
-        "prompt-input-item-count": Required[int],
-        "provider": Required[str],
-        "thread-id": Required[str],
-        "tool-count": Required[int],
-        "turn-id": Required[str],
-    },
-    total=False,
-)
-
-ModelResponseCompletedPayload = TypedDict(
-    "ModelResponseCompletedPayload",
-    {
-        "type": Required[Literal["model-response-completed"]],
-        "attempt": Required[int],
-        "cwd": Required[str],
-        "model-request-id": Required[str],
-        "needs-follow-up": Required[bool],
-        "response-id": Required[str],
-        "thread-id": Required[str],
-        "token-usage": NotRequired[Union[Any, None]],
-        "turn-id": Required[str],
-    },
-    total=False,
-)
-
-SessionEndPayload = TypedDict(
-    "SessionEndPayload",
-    {
-        "type": Required[Literal["session-end"]],
-        "cwd": Required[str],
-        "session-source": Required[str],
-        "thread-id": Required[str],
-    },
-    total=False,
-)
-
-SessionStartPayload = TypedDict(
-    "SessionStartPayload",
-    {
-        "type": Required[Literal["session-start"]],
-        "cwd": Required[str],
-        "session-source": Required[str],
-        "thread-id": Required[str],
-    },
-    total=False,
-)
-
-ToolCallFinishedPayload = TypedDict(
-    "ToolCallFinishedPayload",
-    {
-        "type": Required[Literal["tool-call-finished"]],
-        "attempt": Required[int],
-        "call-id": Required[str],
-        "cwd": Required[str],
-        "duration-ms": Required[int],
-        "model-request-id": Required[str],
-        "output-bytes": Required[int],
-        "output-preview": NotRequired[Union[None, str]],
-        "status": Required[ToolCallStatus],
-        "success": Required[bool],
-        "thread-id": Required[str],
-        "tool-name": Required[str],
-        "turn-id": Required[str],
-    },
-    total=False,
-)
-
-ToolCallStartedPayload = TypedDict(
-    "ToolCallStartedPayload",
-    {
-        "type": Required[Literal["tool-call-started"]],
-        "attempt": Required[int],
-        "call-id": Required[str],
-        "cwd": Required[str],
-        "model-request-id": Required[str],
-        "thread-id": Required[str],
-        "tool-name": Required[str],
-        "turn-id": Required[str],
-    },
-    total=False,
-)
-
-HookPayload = Union[
-    HookPayloadBase,
-    AgentTurnCompletePayload,
-    ApprovalRequestedPayload,
-    ModelRequestStartedPayload,
-    ModelResponseCompletedPayload,
-    SessionEndPayload,
-    SessionStartPayload,
-    ToolCallFinishedPayload,
-    ToolCallStartedPayload,
-    Dict[str, Any],
-]
 

@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-# Installed by `xcodex hooks install rust` into `$CODEX_HOME/hooks/sdk/rust`.
+# Installed by `xcodex hooks install sdks rust` into `$CODEX_HOME/hooks/sdk/rust`.
 # This keeps the template dependency-light and avoids copy/pasting helper code.
 codex-hooks-sdk = { path = "../../sdk/rust" }
 serde_json = "1"

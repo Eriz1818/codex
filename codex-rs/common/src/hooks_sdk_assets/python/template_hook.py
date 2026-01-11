@@ -10,7 +10,7 @@ as a starting point you copy and edit.
 It imports the shared helper from `$CODEX_HOME/hooks/xcodex_hooks.py`.
 That helper is installed by:
 
-    xcodex hooks install python
+    xcodex hooks install sdks python
 
 or automatically by:
 
@@ -29,7 +29,7 @@ import xcodex_hooks  # noqa: E402
 
 
 def main() -> int:
-    # Parse the event payload (handles stdin vs payload-path envelopes).
+    # Parse the event payload (handles stdin vs payload_path envelopes).
     payload = xcodex_hooks.read_payload()
 
     codex_home = pathlib.Path(os.environ.get("CODEX_HOME", str(pathlib.Path.home() / ".xcodex")))

@@ -4,7 +4,7 @@ This folder is part of the **xCodex hooks kit**. It is installed under
 `$CODEX_HOME/hooks/templates/java/` by:
 
 ```sh
-xcodex hooks install java
+xcodex hooks install sdks java
 ```
 
 Docs:

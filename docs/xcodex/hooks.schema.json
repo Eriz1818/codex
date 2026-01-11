@@ -3,463 +3,315 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "HookPayload",
     "type": "object",
-    "oneOf": [
-      {
-        "type": "object",
-        "required": [
-          "cwd",
-          "input-messages",
-          "thread-id",
-          "turn-id",
-          "type"
-        ],
-        "properties": {
-          "cwd": {
-            "type": "string"
-          },
-          "input-messages": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "last-assistant-message": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "thread-id": {
-            "type": "string"
-          },
-          "turn-id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "agent-turn-complete"
-            ]
-          }
-        }
-      },
-      {
-        "type": "object",
-        "required": [
-          "kind",
-          "thread-id",
-          "type"
-        ],
-        "properties": {
-          "approval-policy": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/AskForApproval"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "call-id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "command": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "cwd": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "grant-root": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "kind": {
-            "$ref": "#/definitions/ApprovalKind"
-          },
-          "message": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "paths": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "proposed-execpolicy-amendment": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            }
-          },
-          "reason": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "request-id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "sandbox-policy": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/SandboxPolicy"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "server-name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "thread-id": {
-            "type": "string"
-          },
-          "turn-id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "approval-requested"
-            ]
-          }
-        }
-      },
-      {
-        "type": "object",
-        "required": [
-          "cwd",
-          "session-source",
-          "thread-id",
-          "type"
-        ],
-        "properties": {
-          "cwd": {
-            "type": "string"
-          },
-          "session-source": {
-            "type": "string"
-          },
-          "thread-id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "session-start"
-            ]
-          }
-        }
-      },
-      {
-        "type": "object",
-        "required": [
-          "cwd",
-          "session-source",
-          "thread-id",
-          "type"
-        ],
-        "properties": {
-          "cwd": {
-            "type": "string"
-          },
-          "session-source": {
-            "type": "string"
-          },
-          "thread-id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "session-end"
-            ]
-          }
-        }
-      },
-      {
-        "type": "object",
-        "required": [
-          "attempt",
-          "cwd",
-          "has-output-schema",
-          "model",
-          "model-request-id",
-          "parallel-tool-calls",
-          "prompt-input-item-count",
-          "provider",
-          "thread-id",
-          "tool-count",
-          "turn-id",
-          "type"
-        ],
-        "properties": {
-          "attempt": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0.0
-          },
-          "cwd": {
-            "type": "string"
-          },
-          "has-output-schema": {
-            "type": "boolean"
-          },
-          "model": {
-            "type": "string"
-          },
-          "model-request-id": {
-            "type": "string"
-          },
-          "parallel-tool-calls": {
-            "type": "boolean"
-          },
-          "prompt-input-item-count": {
-            "type": "integer",
-            "format": "uint",
-            "minimum": 0.0
-          },
-          "provider": {
-            "type": "string"
-          },
-          "thread-id": {
-            "type": "string"
-          },
-          "tool-count": {
-            "type": "integer",
-            "format": "uint",
-            "minimum": 0.0
-          },
-          "turn-id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "model-request-started"
-            ]
-          }
-        }
-      },
-      {
-        "type": "object",
-        "required": [
-          "attempt",
-          "cwd",
-          "model-request-id",
-          "needs-follow-up",
-          "response-id",
-          "thread-id",
-          "turn-id",
-          "type"
-        ],
-        "properties": {
-          "attempt": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0.0
-          },
-          "cwd": {
-            "type": "string"
-          },
-          "model-request-id": {
-            "type": "string"
-          },
-          "needs-follow-up": {
-            "type": "boolean"
-          },
-          "response-id": {
-            "type": "string"
-          },
-          "thread-id": {
-            "type": "string"
-          },
-          "token-usage": {
-            "anyOf": [
-              {
-                "$ref": "#/definitions/TokenUsage"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "turn-id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "model-response-completed"
-            ]
-          }
-        }
-      },
-      {
-        "type": "object",
-        "required": [
-          "attempt",
-          "call-id",
-          "cwd",
-          "model-request-id",
-          "thread-id",
-          "tool-name",
-          "turn-id",
-          "type"
-        ],
-        "properties": {
-          "attempt": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0.0
-          },
-          "call-id": {
-            "type": "string"
-          },
-          "cwd": {
-            "type": "string"
-          },
-          "model-request-id": {
-            "type": "string"
-          },
-          "thread-id": {
-            "type": "string"
-          },
-          "tool-name": {
-            "type": "string"
-          },
-          "turn-id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "tool-call-started"
-            ]
-          }
-        }
-      },
-      {
-        "type": "object",
-        "required": [
-          "attempt",
-          "call-id",
-          "cwd",
-          "duration-ms",
-          "model-request-id",
-          "output-bytes",
-          "status",
-          "success",
-          "thread-id",
-          "tool-name",
-          "turn-id",
-          "type"
-        ],
-        "properties": {
-          "attempt": {
-            "type": "integer",
-            "format": "uint32",
-            "minimum": 0.0
-          },
-          "call-id": {
-            "type": "string"
-          },
-          "cwd": {
-            "type": "string"
-          },
-          "duration-ms": {
-            "type": "integer",
-            "format": "uint64",
-            "minimum": 0.0
-          },
-          "model-request-id": {
-            "type": "string"
-          },
-          "output-bytes": {
-            "type": "integer",
-            "format": "uint",
-            "minimum": 0.0
-          },
-          "output-preview": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "$ref": "#/definitions/ToolCallStatus"
-          },
-          "success": {
-            "type": "boolean"
-          },
-          "thread-id": {
-            "type": "string"
-          },
-          "tool-name": {
-            "type": "string"
-          },
-          "turn-id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string",
-            "enum": [
-              "tool-call-finished"
-            ]
-          }
-        }
-      }
-    ],
     "required": [
-      "event-id",
-      "schema-version",
-      "timestamp"
+      "cwd",
+      "event_id",
+      "hook_event_name",
+      "permission_mode",
+      "schema_version",
+      "session_id",
+      "timestamp",
+      "transcript_path",
+      "xcodex_event_type"
     ],
     "properties": {
-      "event-id": {
+      "approval_policy": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/AskForApproval"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "attempt": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint32",
+        "minimum": 0.0
+      },
+      "call_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "command": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "cwd": {
         "type": "string"
       },
-      "schema-version": {
+      "duration_ms": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint64",
+        "minimum": 0.0
+      },
+      "event_id": {
+        "type": "string"
+      },
+      "grant_root": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "has_output_schema": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "hook_event_name": {
+        "type": "string"
+      },
+      "input_item_count": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0.0
+      },
+      "input_messages": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "kind": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "last_assistant_message": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "message": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "model": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "model_request_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "needs_follow_up": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "notification_type": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "output_bytes": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0.0
+      },
+      "output_preview": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "parallel_tool_calls": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "paths": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "permission_mode": {
+        "type": "string"
+      },
+      "prompt": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "proposed_execpolicy_amendment": {
+        "type": [
+          "array",
+          "null"
+        ],
+        "items": {
+          "type": "string"
+        }
+      },
+      "provider": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "reason": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "response_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "sandbox_policy": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/SandboxPolicy"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "schema_version": {
         "type": "integer",
         "format": "uint32",
         "minimum": 0.0
       },
+      "server_name": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "session_id": {
+        "type": "string"
+      },
+      "session_source": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "status": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "subagent": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "success": {
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "timestamp": {
+        "type": "string"
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "token_usage": {
+        "anyOf": [
+          {
+            "$ref": "#/definitions/TokenUsage"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "tool_count": {
+        "type": [
+          "integer",
+          "null"
+        ],
+        "format": "uint",
+        "minimum": 0.0
+      },
+      "tool_input": true,
+      "tool_name": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "tool_response": true,
+      "tool_use_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "transcript_path": {
+        "type": "string"
+      },
+      "trigger": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "turn_id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "xcodex_event_type": {
         "type": "string"
       }
     },
@@ -467,14 +319,6 @@
       "AbsolutePathBuf": {
         "description": "A path that is guaranteed to be absolute and normalized (though it is not guaranteed to be canonicalized or exist on the filesystem).\n\nIMPORTANT: When deserializing an `AbsolutePathBuf`, a base path must be set using [AbsolutePathBufGuard::new]. If no base path is set, the deserialization will fail unless the path being deserialized is already absolute.",
         "type": "string"
-      },
-      "ApprovalKind": {
-        "type": "string",
-        "enum": [
-          "exec",
-          "apply-patch",
-          "elicitation"
-        ]
       },
       "AskForApproval": {
         "description": "Determines the conditions under which the user is consulted to approve running the command proposed by Codex.",
@@ -644,13 +488,6 @@
             "format": "int64"
           }
         }
-      },
-      "ToolCallStatus": {
-        "type": "string",
-        "enum": [
-          "completed",
-          "aborted"
-        ]
       }
     }
   },
@@ -659,20 +496,24 @@
     "title": "HookStdinEnvelope",
     "type": "object",
     "required": [
-      "event-id",
-      "payload-path",
-      "schema-version",
+      "event_id",
+      "hook_event_name",
+      "payload_path",
+      "schema_version",
       "timestamp",
-      "type"
+      "xcodex_event_type"
     ],
     "properties": {
-      "event-id": {
+      "event_id": {
         "type": "string"
       },
-      "payload-path": {
+      "hook_event_name": {
         "type": "string"
       },
-      "schema-version": {
+      "payload_path": {
+        "type": "string"
+      },
+      "schema_version": {
         "type": "integer",
         "format": "uint32",
         "minimum": 0.0
@@ -680,7 +521,7 @@
       "timestamp": {
         "type": "string"
       },
-      "type": {
+      "xcodex_event_type": {
         "type": "string"
       }
     }

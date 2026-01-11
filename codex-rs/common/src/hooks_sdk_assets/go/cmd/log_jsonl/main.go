@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	// Parse the event payload (handles stdin vs payload-path envelopes).
+	// Parse the event payload (handles stdin vs payload_path envelopes).
 	payload, err := hooksdk.ReadPayload()
 	if err != nil {
 		panic(err)
@@ -31,7 +31,7 @@ func main() {
 	defer f.Close()
 
 	enc := json.NewEncoder(f)
-	if err := enc.Encode(payload.Raw()); err != nil {
+	if err := enc.Encode(payload.RawPayload); err != nil {
 		panic(err)
 	}
 }

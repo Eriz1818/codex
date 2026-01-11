@@ -8,7 +8,7 @@ dispatches them to a user hook module.
 
 Installed into `$CODEX_HOME/hooks/` by:
 
-  xcodex hooks install python
+  xcodex hooks install sdks python
 
 Usage (example):
 
@@ -17,7 +17,7 @@ Usage (example):
 Protocol (v1):
 
   One JSON object per line. For hook events:
-    {"schema-version":1,"type":"hook-event","seq":123,"event":{...hook payload...}}
+    {"schema_version":1,"type":"hook-event","seq":123,"event":{...hook payload...}}
 
 The `event` payload uses the same schema as external hooks (see `docs/xcodex/hooks.md`).
 """
@@ -42,8 +42,10 @@ def _load_module_from_path(path: str) -> ModuleType:
 
 
 def _resolve_event_payload(event_or_envelope: Any) -> Dict[str, Any]:
-    if isinstance(event_or_envelope, dict) and "payload-path" in event_or_envelope:
-        payload_path = event_or_envelope.get("payload-path")
+    if isinstance(event_or_envelope, dict) and (
+        "payload_path" in event_or_envelope or "payload-path" in event_or_envelope
+    ):
+        payload_path = event_or_envelope.get("payload_path") or event_or_envelope.get("payload-path")
         if isinstance(payload_path, str) and payload_path:
             return json.loads(pathlib.Path(payload_path).read_text(encoding="utf-8"))
     if isinstance(event_or_envelope, dict):
@@ -93,4 +95,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

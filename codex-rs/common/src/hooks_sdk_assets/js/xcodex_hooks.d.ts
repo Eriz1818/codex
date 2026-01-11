@@ -2,8 +2,8 @@
  * xCodex hooks kit: TypeScript type definitions for external hooks.
  *
  * Installed into `$CODEX_HOME/hooks/` by:
- * - `xcodex hooks install javascript`
- * - `xcodex hooks install typescript`
+ * - `xcodex hooks install sdks javascript`
+ * - `xcodex hooks install sdks typescript`
  *
  * These types model the JSON payload shape emitted by Codex hooks.
  *
@@ -14,124 +14,61 @@
  * - Authoritative config reference: docs/config.md#hooks
  */
 
-export type ApprovalKind = "exec" | "apply-patch" | "elicitation";
-export type ToolCallStatus = "completed" | "aborted";
-
-export type HookPayloadBase = {
-  "schema-version": number;
-  "event-id": string;
-  timestamp: string;
-};
-
-export type AgentTurnCompletePayload = HookPayloadBase & {
-  type: "agent-turn-complete";
-  cwd: string;
-  "input-messages": string[];
-  "last-assistant-message"?: null | string;
-  "thread-id": string;
-  "turn-id": string;
-};
-
-export type ApprovalRequestedPayload = HookPayloadBase & {
-  type: "approval-requested";
-  "approval-policy"?: "untrusted" | "on-failure" | "on-request" | "never" | null;
-  "call-id"?: null | string;
+export type HookPayload = {
+  approval_policy?: "untrusted" | "on-failure" | "on-request" | "never" | null;
+  attempt?: null | number;
+  call_id?: null | string;
   command?: null | string[];
-  cwd?: null | string;
-  "grant-root"?: null | string;
-  kind: ApprovalKind;
+  cwd: string;
+  duration_ms?: null | number;
+  event_id: string;
+  grant_root?: null | string;
+  has_output_schema?: boolean | null;
+  hook_event_name: string;
+  input_item_count?: null | number;
+  input_messages?: null | string[];
+  kind?: null | string;
+  last_assistant_message?: null | string;
   message?: null | string;
+  model?: null | string;
+  model_request_id?: null | string;
+  needs_follow_up?: boolean | null;
+  notification_type?: null | string;
+  output_bytes?: null | number;
+  output_preview?: null | string;
+  parallel_tool_calls?: boolean | null;
   paths?: null | string[];
-  "proposed-execpolicy-amendment"?: null | string[];
+  permission_mode: string;
+  prompt?: null | string;
+  proposed_execpolicy_amendment?: null | string[];
+  provider?: null | string;
   reason?: null | string;
-  "request-id"?: null | string;
-  "sandbox-policy"?: null | unknown;
-  "server-name"?: null | string;
-  "thread-id": string;
-  "turn-id"?: null | string;
+  request_id?: null | string;
+  response_id?: null | string;
+  sandbox_policy?: null | unknown;
+  schema_version: number;
+  server_name?: null | string;
+  session_id: string;
+  session_source?: null | string;
+  status?: null | string;
+  subagent?: null | string;
+  success?: boolean | null;
+  timestamp: string;
+  title?: null | string;
+  token_usage?: null | unknown;
+  tool_count?: null | number;
+  tool_input?: unknown;
+  tool_name?: null | string;
+  tool_response?: unknown;
+  tool_use_id?: null | string;
+  transcript_path: string;
+  trigger?: null | string;
+  turn_id?: null | string;
+  xcodex_event_type: string;
 };
-
-export type ModelRequestStartedPayload = HookPayloadBase & {
-  type: "model-request-started";
-  attempt: number;
-  cwd: string;
-  "has-output-schema": boolean;
-  model: string;
-  "model-request-id": string;
-  "parallel-tool-calls": boolean;
-  "prompt-input-item-count": number;
-  provider: string;
-  "thread-id": string;
-  "tool-count": number;
-  "turn-id": string;
-};
-
-export type ModelResponseCompletedPayload = HookPayloadBase & {
-  type: "model-response-completed";
-  attempt: number;
-  cwd: string;
-  "model-request-id": string;
-  "needs-follow-up": boolean;
-  "response-id": string;
-  "thread-id": string;
-  "token-usage"?: null | unknown;
-  "turn-id": string;
-};
-
-export type SessionEndPayload = HookPayloadBase & {
-  type: "session-end";
-  cwd: string;
-  "session-source": string;
-  "thread-id": string;
-};
-
-export type SessionStartPayload = HookPayloadBase & {
-  type: "session-start";
-  cwd: string;
-  "session-source": string;
-  "thread-id": string;
-};
-
-export type ToolCallFinishedPayload = HookPayloadBase & {
-  type: "tool-call-finished";
-  attempt: number;
-  "call-id": string;
-  cwd: string;
-  "duration-ms": number;
-  "model-request-id": string;
-  "output-bytes": number;
-  "output-preview"?: null | string;
-  status: ToolCallStatus;
-  success: boolean;
-  "thread-id": string;
-  "tool-name": string;
-  "turn-id": string;
-};
-
-export type ToolCallStartedPayload = HookPayloadBase & {
-  type: "tool-call-started";
-  attempt: number;
-  "call-id": string;
-  cwd: string;
-  "model-request-id": string;
-  "thread-id": string;
-  "tool-name": string;
-  "turn-id": string;
-};
-
-export type HookPayload =
-  | AgentTurnCompletePayload
-  | ApprovalRequestedPayload
-  | ModelRequestStartedPayload
-  | ModelResponseCompletedPayload
-  | SessionEndPayload
-  | SessionStartPayload
-  | ToolCallFinishedPayload
-  | ToolCallStartedPayload
-  | (HookPayloadBase & { type: string; [k: string]: unknown });
 
 /**
- * Read a hook payload (handles stdin vs payload-path envelopes).
+ * Read a hook payload (handles stdin vs payload_path envelopes).
  *
  * @param raw Optional stdin string; if omitted, reads from fd 0.
  */

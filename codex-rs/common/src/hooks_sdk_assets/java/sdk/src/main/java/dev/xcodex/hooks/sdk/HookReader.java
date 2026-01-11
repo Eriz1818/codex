@@ -11,11 +11,11 @@ import java.nio.file.Path;
 /**
  * xCodex hooks kit: Java helper library for external hooks.
  *
- * <p>This module is vendored by {@code xcodex hooks install java} into
+ * <p>This module is vendored by {@code xcodex hooks install sdks java} into
  * {@code $CODEX_HOME/hooks/templates/java/}.
  *
  * <p>Most external hook programs receive JSON on stdin. For large payloads, stdin is a small JSON
- * envelope containing {@code payload-path}, which points to the full payload JSON file.
+ * envelope containing {@code payload_path}, which points to the full payload JSON file.
  */
 public final class HookReader {
   private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -23,13 +23,16 @@ public final class HookReader {
   private HookReader() {}
 
   /**
-   * Read a hook payload, handling stdin vs the {@code payload-path} envelope used for large
+   * Read a hook payload, handling stdin vs the {@code payload_path} envelope used for large
    * payloads.
    */
   public static JsonNode readPayload(byte[] stdinBytes) throws IOException {
     String raw = stdinBytes.length == 0 ? "{}" : new String(stdinBytes, StandardCharsets.UTF_8);
     JsonNode payload = MAPPER.readTree(raw);
-    JsonNode payloadPathNode = payload.get("payload-path");
+    JsonNode payloadPathNode = payload.get("payload_path");
+    if (payloadPathNode == null || !payloadPathNode.isTextual()) {
+      payloadPathNode = payload.get("payload-path");
+    }
     if (payloadPathNode != null && payloadPathNode.isTextual()) {
       Path payloadPath = Path.of(payloadPathNode.asText());
       String full = Files.readString(payloadPath);

@@ -6,8 +6,6 @@
 //!     > hooks-sdk/src/generated.rs
 
 #[cfg(feature = "hooks-schema")]
-use std::collections::BTreeMap;
-#[cfg(feature = "hooks-schema")]
 use std::collections::BTreeSet;
 #[cfg(feature = "hooks-schema")]
 use std::fmt::Write;
@@ -47,17 +45,12 @@ fn main() {
 
 #[cfg(feature = "hooks-schema")]
 fn generate_rust_sdk(schema: &Value) -> Result<String, String> {
-    let definitions = schema
-        .get("definitions")
+    let properties = schema
+        .get("properties")
         .and_then(Value::as_object)
-        .ok_or("expected definitions object")?;
+        .ok_or("expected top-level properties object")?;
 
-    let one_of = schema
-        .get("oneOf")
-        .and_then(Value::as_array)
-        .ok_or("expected top-level oneOf array")?;
-
-    let root_required: BTreeSet<String> = schema
+    let required: BTreeSet<String> = schema
         .get("required")
         .and_then(Value::as_array)
         .map(|arr| {
@@ -67,27 +60,6 @@ fn generate_rust_sdk(schema: &Value) -> Result<String, String> {
                 .collect()
         })
         .unwrap_or_default();
-
-    let root_properties = schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .ok_or("expected root properties object")?;
-
-    let mut variants: BTreeMap<String, Value> = BTreeMap::new();
-    for variant in one_of {
-        let properties = variant
-            .get("properties")
-            .and_then(Value::as_object)
-            .ok_or("variant missing properties object")?;
-        let ty = properties
-            .get("type")
-            .and_then(|v| v.get("enum"))
-            .and_then(Value::as_array)
-            .and_then(|arr| arr.first())
-            .and_then(Value::as_str)
-            .ok_or("variant type property missing enum string")?;
-        variants.insert(ty.to_string(), variant.clone());
-    }
 
     let mut out = String::new();
     out.push_str(
@@ -109,138 +81,18 @@ pub type ExtraFields = BTreeMap<String, Value>;
 "#,
     );
 
-    for (name, def) in definitions {
-        if let Some(block) = rust_string_enum(def, name) {
-            out.push_str(&block);
-            out.push('\n');
-            continue;
-        }
-        if let Some(block) = rust_object_struct(def, name, definitions) {
-            out.push_str(&block);
-            out.push('\n');
-        }
-    }
-
-    let mut event_types: Vec<&String> = variants.keys().collect();
-    event_types.sort();
-
-    for event_type in event_types {
-        let variant = variants.get(event_type).ok_or("variant disappeared")?;
-        let name = format!("{}Payload", pascal_case(event_type));
-        let properties = variant
-            .get("properties")
-            .and_then(Value::as_object)
-            .ok_or("variant missing properties object")?;
-
-        let mut required: BTreeSet<String> = root_required.clone();
-        if let Some(arr) = variant.get("required").and_then(Value::as_array) {
-            for key in arr.iter().filter_map(Value::as_str) {
-                required.insert(key.to_string());
-            }
-        }
-
-        writeln!(
-            &mut out,
-            "#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]"
-        )
-        .map_err(|_| "formatting failed".to_string())?;
-        writeln!(&mut out, "pub struct {name} {{").map_err(|_| "formatting failed".to_string())?;
-
-        let mut merged: BTreeMap<String, Value> = BTreeMap::new();
-        for (key, schema) in root_properties {
-            merged.insert(key.clone(), schema.clone());
-        }
-        for (key, schema) in properties {
-            merged.insert(key.clone(), schema.clone());
-        }
-
-        let mut keys: Vec<(&String, &Value)> = merged.iter().collect();
-        keys.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
-        for (key, prop_schema) in keys {
-            let field_name = snake_case(key);
-            let mut rust_ty = rust_type_for_schema(prop_schema, definitions);
-
-            let is_required = required.contains(key.as_str());
-            let is_nullable = schema_allows_null(prop_schema);
-            if (!is_required || is_nullable) && !rust_ty.starts_with("Option<") {
-                rust_ty = format!("Option<{rust_ty}>");
-            }
-
-            writeln!(&mut out, "    #[serde(rename = \"{key}\")]")
-                .map_err(|_| "formatting failed".to_string())?;
-            writeln!(&mut out, "    pub {field_name}: {rust_ty},")
-                .map_err(|_| "formatting failed".to_string())?;
-        }
-
-        out.push_str("    #[serde(flatten)]\n");
-        out.push_str("    pub extra: ExtraFields,\n");
-        out.push_str("}\n\n");
-    }
-
-    Ok(out)
-}
-
-#[cfg(feature = "hooks-schema")]
-fn rust_string_enum(schema: &Value, name: &str) -> Option<String> {
-    let literals = schema_string_literals(schema)?;
-    let mut variants: Vec<(String, String)> = literals
-        .into_iter()
-        .map(|lit| {
-            let variant = pascal_case(&lit);
-            (lit, variant)
-        })
-        .collect();
-    variants.sort();
-
-    let mut out = String::new();
-    out.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]\n");
-    out.push_str(&format!("pub enum {name} {{\n"));
-    for (lit, variant) in variants {
-        out.push_str(&format!("    #[serde(rename = \"{lit}\")]\n"));
-        out.push_str(&format!("    {variant},\n"));
-    }
-    out.push_str("    #[serde(other)]\n");
-    out.push_str("    Unknown,\n");
-    out.push_str("}\n");
-    Some(out)
-}
-
-#[cfg(feature = "hooks-schema")]
-fn rust_object_struct(
-    schema: &Value,
-    name: &str,
-    definitions: &serde_json::Map<String, Value>,
-) -> Option<String> {
-    if !schema_is_object_struct(schema) {
-        return None;
-    }
-
-    let properties = schema.get("properties")?.as_object()?;
-    let required: BTreeSet<String> = schema
-        .get("required")
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let mut out = String::new();
     writeln!(
         &mut out,
         "#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]"
     )
-    .ok()?;
-    writeln!(&mut out, "pub struct {name} {{").ok()?;
+    .map_err(|_| "formatting failed".to_string())?;
+    writeln!(&mut out, "pub struct HookPayload {{").map_err(|_| "formatting failed".to_string())?;
 
     let mut keys: Vec<(&String, &Value)> = properties.iter().collect();
     keys.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
-
     for (key, prop_schema) in keys {
         let field_name = snake_case(key);
-        let mut rust_ty = rust_type_for_schema(prop_schema, definitions);
+        let mut rust_ty = rust_type_for_schema(prop_schema);
 
         let is_required = required.contains(key.as_str());
         let is_nullable = schema_allows_null(prop_schema);
@@ -248,154 +100,94 @@ fn rust_object_struct(
             rust_ty = format!("Option<{rust_ty}>");
         }
 
-        writeln!(&mut out, "    #[serde(rename = \"{key}\")]").ok()?;
-        writeln!(&mut out, "    pub {field_name}: {rust_ty},").ok()?;
+        writeln!(&mut out, "    #[serde(rename = \"{key}\")]")
+            .map_err(|_| "formatting failed".to_string())?;
+        writeln!(&mut out, "    pub {field_name}: {rust_ty},")
+            .map_err(|_| "formatting failed".to_string())?;
     }
 
-    writeln!(&mut out, "    #[serde(flatten)]").ok()?;
-    writeln!(&mut out, "    pub extra: ExtraFields,").ok()?;
-    writeln!(&mut out, "}}").ok()?;
+    out.push_str("    #[serde(flatten)]\n");
+    out.push_str("    pub extra: ExtraFields,\n");
+    out.push_str("}\n");
 
-    Some(out)
+    Ok(out)
 }
 
 #[cfg(feature = "hooks-schema")]
-fn schema_string_literals(schema: &Value) -> Option<Vec<String>> {
-    if let Some(arr) = schema.get("enum").and_then(Value::as_array) {
-        let mut out = Vec::new();
-        for v in arr {
-            out.push(v.as_str()?.to_string());
-        }
-        return Some(out);
+fn schema_allows_null(schema: &Value) -> bool {
+    if schema.get("type").and_then(Value::as_str) == Some("null") {
+        return true;
     }
-
-    let one_of = schema.get("oneOf")?.as_array()?;
-    let mut out = Vec::new();
-    for v in one_of {
-        out.extend(schema_string_literals(v)?);
+    if let Some(arr) = schema.get("type").and_then(Value::as_array) {
+        return arr.iter().any(|v| v.as_str() == Some("null"));
     }
-    Some(out)
+    if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
+        return one_of.iter().any(schema_allows_null);
+    }
+    false
 }
 
 #[cfg(feature = "hooks-schema")]
-fn rust_type_for_schema(schema: &Value, definitions: &serde_json::Map<String, Value>) -> String {
-    let schema = strip_null(schema);
-
-    if let Some(reference) = schema.get("$ref").and_then(Value::as_str)
-        && let Some((_, name)) = reference.rsplit_once('/')
-        && let Some(def) = definitions.get(name)
-    {
-        if schema_string_literals(def).is_some() || schema_is_object_struct(def) {
-            return name.to_string();
-        }
-        return rust_type_for_schema(def, definitions);
+fn rust_type_for_schema(schema: &Value) -> String {
+    if schema.get("$ref").is_some() {
+        return "Value".to_string();
     }
 
-    if let Some(ty) = schema_type(schema) {
-        match ty {
-            "string" => return "String".to_string(),
-            "boolean" => return "bool".to_string(),
-            "integer" => {
-                if let Some(format) = schema.get("format").and_then(Value::as_str) {
-                    match format {
-                        "uint32" => return "u32".to_string(),
-                        "uint64" => return "u64".to_string(),
-                        "uint" => return "u64".to_string(),
-                        _ => {}
-                    }
-                }
-
-                if schema_minimum_non_negative(schema) {
-                    return "u64".to_string();
-                }
-                return "i64".to_string();
-            }
-            "array" => {
-                let items = schema
-                    .get("items")
-                    .map(|s| rust_type_for_schema(s, definitions))
-                    .unwrap_or_else(|| "Value".to_string());
-                return format!("Vec<{items}>");
-            }
-            "object" => return "Value".to_string(),
-            _ => {}
+    if let Some(ty) = schema.get("type") {
+        if let Some(s) = ty.as_str() {
+            return rust_type_for_primitive(s, schema);
         }
+        if let Some(arr) = ty.as_array() {
+            let mut types: Vec<String> = arr
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|t| *t != "null")
+                .map(|t| rust_type_for_primitive(t, schema))
+                .collect();
+            types.sort();
+            types.dedup();
+            return types
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "Value".to_string());
+        }
+    }
+
+    if schema.get("oneOf").is_some() {
+        return "Value".to_string();
     }
 
     "Value".to_string()
 }
 
 #[cfg(feature = "hooks-schema")]
-fn schema_is_object_struct(schema: &Value) -> bool {
-    schema.get("oneOf").is_none() && schema.get("type").and_then(Value::as_str) == Some("object")
-}
-
-#[cfg(feature = "hooks-schema")]
-fn schema_type(schema: &Value) -> Option<&str> {
-    if let Some(ty) = schema.get("type").and_then(Value::as_str) {
-        return Some(ty);
-    }
-    let arr = schema.get("type").and_then(Value::as_array)?;
-    arr.iter()
-        .filter_map(Value::as_str)
-        .find(|ty| *ty != "null")
-}
-
-#[cfg(feature = "hooks-schema")]
-fn schema_allows_null(schema: &Value) -> bool {
-    if let Some(arr) = schema.get("type").and_then(Value::as_array) {
-        return arr.iter().any(|v| v.as_str() == Some("null"));
-    }
-    if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
-        return any_of
-            .iter()
-            .any(|v| v.get("type").and_then(Value::as_str) == Some("null"));
-    }
-    false
-}
-
-#[cfg(feature = "hooks-schema")]
-fn strip_null(schema: &Value) -> &Value {
-    if let Some(any_of) = schema.get("anyOf").and_then(Value::as_array) {
-        for arm in any_of {
-            if arm.get("type").and_then(Value::as_str) != Some("null") {
-                return arm;
-            }
+fn rust_type_for_primitive(ty: &str, schema: &Value) -> String {
+    match ty {
+        "string" => "String".to_string(),
+        "integer" => "u64".to_string(),
+        "number" => "f64".to_string(),
+        "boolean" => "bool".to_string(),
+        "array" => {
+            let item_ty = schema
+                .get("items")
+                .map(rust_type_for_schema)
+                .unwrap_or_else(|| "Value".to_string());
+            format!("Vec<{item_ty}>")
         }
+        "object" => "Value".to_string(),
+        _ => "Value".to_string(),
     }
-    schema
-}
-
-#[cfg(feature = "hooks-schema")]
-fn schema_minimum_non_negative(schema: &Value) -> bool {
-    schema
-        .get("minimum")
-        .and_then(Value::as_f64)
-        .map(|v| v >= 0.0)
-        .unwrap_or(false)
-}
-
-#[cfg(feature = "hooks-schema")]
-fn pascal_case(input: &str) -> String {
-    let mut out = String::new();
-    for part in input.split(['-', '_', ' ']) {
-        if part.is_empty() {
-            continue;
-        }
-        let mut chars = part.chars();
-        if let Some(first) = chars.next() {
-            out.extend(first.to_uppercase());
-            out.push_str(chars.as_str());
-        }
-    }
-    out
 }
 
 #[cfg(feature = "hooks-schema")]
 fn snake_case(input: &str) -> String {
-    let mut out = input.replace('-', "_");
-    if out == "type" {
-        out = "event_type".to_string();
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        if c == '-' {
+            out.push('_');
+        } else {
+            out.push(c);
+        }
     }
     out
 }

@@ -14,7 +14,7 @@ import java.nio.file.StandardOpenOption;
  * <p>This is a template you copy and edit. It shows how to:
  *
  * <ul>
- *   <li>Read the hook payload from stdin (including payload-path envelopes)</li>
+ *   <li>Read the hook payload from stdin (including payload_path envelopes)</li>
  *   <li>Write a simple JSONL log under {@code $CODEX_HOME}</li>
  * </ul>
  */

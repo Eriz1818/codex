@@ -3,10 +3,10 @@
  *
  * Install into `$CODEX_HOME/hooks/` with:
  *
- *   xcodex hooks install javascript
+ *   xcodex hooks install sdks javascript
  *
  * This helper focuses on the most error-prone part of external hook authoring:
- * handling stdin vs the `payload-path` envelope used for large payloads.
+ * handling stdin vs the `payload_path` envelope used for large payloads.
  *
  * Docs:
  * - Hooks overview: docs/xcodex/hooks.md
@@ -25,7 +25,7 @@ import fs from "node:fs";
 export function readPayload(raw) {
   const text = raw ?? fs.readFileSync(0, "utf8");
   const payload = JSON.parse(text || "{}");
-  const payloadPath = payload["payload-path"];
+  const payloadPath = payload["payload_path"] ?? payload["payload-path"];
   if (payloadPath) {
     return JSON.parse(fs.readFileSync(payloadPath, "utf8"));
   }

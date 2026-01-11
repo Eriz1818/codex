@@ -6,8 +6,6 @@
 //!     > common/src/hooks_sdk_assets/js/xcodex_hooks.d.ts
 
 #[cfg(feature = "hooks-schema")]
-use std::collections::BTreeMap;
-#[cfg(feature = "hooks-schema")]
 use std::collections::BTreeSet;
 #[cfg(feature = "hooks-schema")]
 use std::fmt::Write;
@@ -62,9 +60,9 @@ fn generate_typescript_dts(schema: &Value) -> Result<String, String> {
     writeln!(&mut out, r#" *"#).map_err(|_| "formatting failed".to_string())?;
     writeln!(&mut out, r#" * Installed into `$CODEX_HOME/hooks/` by:"#,)
         .map_err(|_| "formatting failed".to_string())?;
-    writeln!(&mut out, r#" * - `xcodex hooks install javascript`"#)
+    writeln!(&mut out, r#" * - `xcodex hooks install sdks javascript`"#)
         .map_err(|_| "formatting failed".to_string())?;
-    writeln!(&mut out, r#" * - `xcodex hooks install typescript`"#)
+    writeln!(&mut out, r#" * - `xcodex hooks install sdks typescript`"#)
         .map_err(|_| "formatting failed".to_string())?;
     writeln!(&mut out, r#" *"#).map_err(|_| "formatting failed".to_string())?;
     writeln!(
@@ -94,37 +92,7 @@ fn generate_typescript_dts(schema: &Value) -> Result<String, String> {
     writeln!(&mut out, r#" */"#).map_err(|_| "formatting failed".to_string())?;
     writeln!(&mut out).map_err(|_| "formatting failed".to_string())?;
 
-    if let Some(approval_kind) = definitions
-        .get("ApprovalKind")
-        .and_then(ts_schema_string_union)
-    {
-        writeln!(&mut out, "export type ApprovalKind = {approval_kind};")
-            .map_err(|_| "formatting failed".to_string())?;
-    }
-    if let Some(tool_call_status) = definitions
-        .get("ToolCallStatus")
-        .and_then(ts_schema_string_union)
-    {
-        writeln!(&mut out, "export type ToolCallStatus = {tool_call_status};")
-            .map_err(|_| "formatting failed".to_string())?;
-    }
-    writeln!(&mut out).map_err(|_| "formatting failed".to_string())?;
-
-    writeln!(&mut out, r#"export type HookPayloadBase = {{"#)
-        .map_err(|_| "formatting failed".to_string())?;
-    writeln!(&mut out, r#"  "schema-version": number;"#)
-        .map_err(|_| "formatting failed".to_string())?;
-    writeln!(&mut out, r#"  "event-id": string;"#).map_err(|_| "formatting failed".to_string())?;
-    writeln!(&mut out, r#"  timestamp: string;"#).map_err(|_| "formatting failed".to_string())?;
-    writeln!(&mut out, r#"}};"#).map_err(|_| "formatting failed".to_string())?;
-    writeln!(&mut out).map_err(|_| "formatting failed".to_string())?;
-
-    let one_of = schema
-        .get("oneOf")
-        .and_then(Value::as_array)
-        .ok_or("expected top-level oneOf array")?;
-
-    let root_required: BTreeSet<String> = schema
+    let required: BTreeSet<String> = schema
         .get("required")
         .and_then(Value::as_array)
         .map(|arr| {
@@ -135,79 +103,31 @@ fn generate_typescript_dts(schema: &Value) -> Result<String, String> {
         })
         .unwrap_or_default();
 
-    let mut variants: BTreeMap<String, Value> = BTreeMap::new();
-    for variant in one_of {
-        let properties = variant
-            .get("properties")
-            .and_then(Value::as_object)
-            .ok_or("variant missing properties object")?;
-        let type_prop = properties
-            .get("type")
-            .ok_or("variant missing type property")?;
-        let ty = type_prop
-            .get("enum")
-            .and_then(Value::as_array)
-            .and_then(|arr| arr.first())
-            .and_then(Value::as_str)
-            .ok_or("variant type property missing enum string")?;
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or("expected top-level properties object")?;
 
-        variants.insert(ty.to_string(), variant.clone());
-    }
+    writeln!(&mut out, "export type HookPayload = {{")
+        .map_err(|_| "formatting failed".to_string())?;
 
-    for (event_type, variant) in &variants {
-        let name = format!("{}Payload", pascal_case(event_type));
-        let properties = variant
-            .get("properties")
-            .and_then(Value::as_object)
-            .ok_or("variant missing properties object")?;
-
-        let mut required: BTreeSet<String> = root_required.clone();
-        if let Some(arr) = variant.get("required").and_then(Value::as_array) {
-            for key in arr.iter().filter_map(Value::as_str) {
-                required.insert(key.to_string());
-            }
-        }
-
-        writeln!(&mut out, "export type {name} = HookPayloadBase & {{")
+    let mut keys: Vec<(&String, &Value)> = properties.iter().collect();
+    keys.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
+    for (key, schema) in keys {
+        let optional = if required.contains(key) { "" } else { "?" };
+        let ts_type = ts_type_for_schema(schema, definitions);
+        let ts_key = ts_key(key);
+        writeln!(&mut out, "  {ts_key}{optional}: {ts_type};")
             .map_err(|_| "formatting failed".to_string())?;
-        writeln!(&mut out, "  type: \"{event_type}\";")
-            .map_err(|_| "formatting failed".to_string())?;
-
-        let mut keys: Vec<(&String, &Value)> = properties.iter().collect();
-        keys.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
-
-        for (key, schema) in keys {
-            if key == "type" || key == "schema-version" || key == "event-id" || key == "timestamp" {
-                continue;
-            }
-
-            let optional = if required.contains(key) { "" } else { "?" };
-            let ts_type = ts_type_for_schema(schema, definitions);
-            let ts_key = ts_key(key);
-            writeln!(&mut out, "  {ts_key}{optional}: {ts_type};")
-                .map_err(|_| "formatting failed".to_string())?;
-        }
-
-        writeln!(&mut out, "}};").map_err(|_| "formatting failed".to_string())?;
-        writeln!(&mut out).map_err(|_| "formatting failed".to_string())?;
     }
 
-    writeln!(&mut out, "export type HookPayload =").map_err(|_| "formatting failed".to_string())?;
-    for event_type in variants.keys() {
-        let name = format!("{}Payload", pascal_case(event_type));
-        writeln!(&mut out, "  | {name}").map_err(|_| "formatting failed".to_string())?;
-    }
-    writeln!(
-        &mut out,
-        r#"  | (HookPayloadBase & {{ type: string; [k: string]: unknown }});"#
-    )
-    .map_err(|_| "formatting failed".to_string())?;
+    writeln!(&mut out, "}};").map_err(|_| "formatting failed".to_string())?;
     writeln!(&mut out).map_err(|_| "formatting failed".to_string())?;
 
     writeln!(&mut out, r#"/**"#).map_err(|_| "formatting failed".to_string())?;
     writeln!(
         &mut out,
-        r#" * Read a hook payload (handles stdin vs payload-path envelopes)."#
+        r#" * Read a hook payload (handles stdin vs payload_path envelopes)."#
     )
     .map_err(|_| "formatting failed".to_string())?;
     writeln!(&mut out, r#" *"#).map_err(|_| "formatting failed".to_string())?;
@@ -360,25 +280,4 @@ fn ts_key(key: &str) -> String {
     } else {
         format!("\"{key}\"")
     }
-}
-
-#[cfg(feature = "hooks-schema")]
-fn pascal_case(s: &str) -> String {
-    let mut out = String::new();
-    let mut upper_next = true;
-    for ch in s.chars() {
-        if ch == '-' || ch == '_' || ch == ' ' {
-            upper_next = true;
-            continue;
-        }
-        if upper_next {
-            for up in ch.to_uppercase() {
-                out.push(up);
-            }
-            upper_next = false;
-        } else {
-            out.push(ch);
-        }
-    }
-    out
 }

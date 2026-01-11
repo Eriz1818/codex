@@ -5,11 +5,11 @@ xCodex hooks kit: Python helper.
 
 This file is meant to be vendored into `$CODEX_HOME/hooks/` via:
 
-    xcodex hooks install python
+    xcodex hooks install sdks python
 
 It provides a single convenience function, `read_payload()`, that hides the
 most error-prone part of writing external hooks: handling stdin vs the
-`payload-path` envelope that Codex uses for large payloads.
+`payload_path` envelope that Codex uses for large payloads.
 
 Optional typed helpers:
 - `xcodex_hooks_types.py` contains generated TypedDict event types.
@@ -28,7 +28,6 @@ import sys
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
-    from xcodex_hooks_models import HookEvent
     from xcodex_hooks_types import HookPayload
 
 
@@ -41,17 +40,17 @@ def read_payload(raw: Optional[str] = None) -> "HookPayload":
     - Otherwise, the function reads stdin (`sys.stdin.read()`).
 
     Output:
-    - Returns the full payload dict for the event (e.g. `type=tool-call-finished`).
+    - Returns the full payload dict for the event.
 
     Behavior:
     - For small payloads, stdin is the full JSON payload.
-    - For large payloads, stdin is a small JSON envelope containing `payload-path`,
+    - For large payloads, stdin is a small JSON envelope containing `payload_path`,
       which points to the full JSON payload written under CODEX_HOME.
 
     Typical usage in a hook script:
 
         payload = read_payload()
-        if payload.get("type") != "tool-call-finished":
+        if payload.get("hook_event_name") != "PostToolUse":
             return 0
         # ... your logic ...
     """
@@ -61,25 +60,24 @@ def read_payload(raw: Optional[str] = None) -> "HookPayload":
     raw = raw or "{}"
     payload: Dict[str, Any] = json.loads(raw)
 
-    payload_path = payload.get("payload-path")
+    payload_path = payload.get("payload_path") or payload.get("payload-path")
     if payload_path:
         payload = json.loads(pathlib.Path(payload_path).read_text(encoding="utf-8"))
 
     return payload
 
 
-def read_payload_model(raw: Optional[str] = None) -> "HookEvent":
+def read_payload_model(raw: Optional[str] = None) -> "xcodex_hooks_models.HookPayload":
     """
     Read a hook payload and parse it into a dataclass model.
 
     This is optional sugar over:
     - `payload = read_payload()`
-    - `event = xcodex_hooks_models.parse_hook_event(payload)`
+    - `event = xcodex_hooks_models.parse_hook_payload(payload)`
 
-    The parser is tolerant by design: unknown event types return `UnknownHookEvent`,
-    and unknown fields are preserved in `.extras` / `.raw`.
+    The parser is tolerant by design: unknown fields are preserved in `.extras` / `.raw`.
     """
     payload = read_payload(raw)
     import xcodex_hooks_models
 
-    return xcodex_hooks_models.parse_hook_event(payload)
+    return xcodex_hooks_models.parse_hook_payload(payload)

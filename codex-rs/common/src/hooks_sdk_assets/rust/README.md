@@ -2,7 +2,7 @@
 
 This folder is part of the **xCodex hooks kit**.
 
-`xcodex hooks install rust` installs:
+`xcodex hooks install sdks rust` installs:
 
 - `$CODEX_HOME/hooks/templates/rust/` (this template)
 - `$CODEX_HOME/hooks/sdk/rust/` (the `codex-hooks-sdk` library crate)

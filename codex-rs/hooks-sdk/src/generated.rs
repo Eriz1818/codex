@@ -14,304 +14,108 @@ use std::collections::BTreeMap;
 
 pub type ExtraFields = BTreeMap<String, Value>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ApprovalKind {
-    #[serde(rename = "apply-patch")]
-    ApplyPatch,
-    #[serde(rename = "elicitation")]
-    Elicitation,
-    #[serde(rename = "exec")]
-    Exec,
-    #[serde(other)]
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AskForApproval {
-    #[serde(rename = "never")]
-    Never,
-    #[serde(rename = "on-failure")]
-    OnFailure,
-    #[serde(rename = "on-request")]
-    OnRequest,
-    #[serde(rename = "untrusted")]
-    Untrusted,
-    #[serde(other)]
-    Unknown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NetworkAccess {
-    #[serde(rename = "enabled")]
-    Enabled,
-    #[serde(rename = "restricted")]
-    Restricted,
-    #[serde(other)]
-    Unknown,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TokenUsage {
-    #[serde(rename = "cached_input_tokens")]
-    pub cached_input_tokens: i64,
-    #[serde(rename = "input_tokens")]
-    pub input_tokens: i64,
-    #[serde(rename = "output_tokens")]
-    pub output_tokens: i64,
-    #[serde(rename = "reasoning_output_tokens")]
-    pub reasoning_output_tokens: i64,
-    #[serde(rename = "total_tokens")]
-    pub total_tokens: i64,
-    #[serde(flatten)]
-    pub extra: ExtraFields,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolCallStatus {
-    #[serde(rename = "aborted")]
-    Aborted,
-    #[serde(rename = "completed")]
-    Completed,
-    #[serde(other)]
-    Unknown,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentTurnCompletePayload {
-    #[serde(rename = "cwd")]
-    pub cwd: String,
-    #[serde(rename = "event-id")]
-    pub event_id: String,
-    #[serde(rename = "input-messages")]
-    pub input_messages: Vec<String>,
-    #[serde(rename = "last-assistant-message")]
-    pub last_assistant_message: Option<String>,
-    #[serde(rename = "schema-version")]
-    pub schema_version: u32,
-    #[serde(rename = "thread-id")]
-    pub thread_id: String,
-    #[serde(rename = "timestamp")]
-    pub timestamp: String,
-    #[serde(rename = "turn-id")]
-    pub turn_id: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(flatten)]
-    pub extra: ExtraFields,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ApprovalRequestedPayload {
-    #[serde(rename = "approval-policy")]
-    pub approval_policy: Option<AskForApproval>,
-    #[serde(rename = "call-id")]
+pub struct HookPayload {
+    #[serde(rename = "approval_policy")]
+    pub approval_policy: Option<Value>,
+    #[serde(rename = "attempt")]
+    pub attempt: Option<u64>,
+    #[serde(rename = "call_id")]
     pub call_id: Option<String>,
     #[serde(rename = "command")]
     pub command: Option<Vec<String>>,
     #[serde(rename = "cwd")]
-    pub cwd: Option<String>,
-    #[serde(rename = "event-id")]
+    pub cwd: String,
+    #[serde(rename = "duration_ms")]
+    pub duration_ms: Option<u64>,
+    #[serde(rename = "event_id")]
     pub event_id: String,
-    #[serde(rename = "grant-root")]
+    #[serde(rename = "grant_root")]
     pub grant_root: Option<String>,
+    #[serde(rename = "has_output_schema")]
+    pub has_output_schema: Option<bool>,
+    #[serde(rename = "hook_event_name")]
+    pub hook_event_name: String,
+    #[serde(rename = "input_item_count")]
+    pub input_item_count: Option<u64>,
+    #[serde(rename = "input_messages")]
+    pub input_messages: Option<Vec<String>>,
     #[serde(rename = "kind")]
-    pub kind: ApprovalKind,
+    pub kind: Option<String>,
+    #[serde(rename = "last_assistant_message")]
+    pub last_assistant_message: Option<String>,
     #[serde(rename = "message")]
     pub message: Option<String>,
+    #[serde(rename = "model")]
+    pub model: Option<String>,
+    #[serde(rename = "model_request_id")]
+    pub model_request_id: Option<String>,
+    #[serde(rename = "needs_follow_up")]
+    pub needs_follow_up: Option<bool>,
+    #[serde(rename = "notification_type")]
+    pub notification_type: Option<String>,
+    #[serde(rename = "output_bytes")]
+    pub output_bytes: Option<u64>,
+    #[serde(rename = "output_preview")]
+    pub output_preview: Option<String>,
+    #[serde(rename = "parallel_tool_calls")]
+    pub parallel_tool_calls: Option<bool>,
     #[serde(rename = "paths")]
     pub paths: Option<Vec<String>>,
-    #[serde(rename = "proposed-execpolicy-amendment")]
+    #[serde(rename = "permission_mode")]
+    pub permission_mode: String,
+    #[serde(rename = "prompt")]
+    pub prompt: Option<String>,
+    #[serde(rename = "proposed_execpolicy_amendment")]
     pub proposed_execpolicy_amendment: Option<Vec<String>>,
+    #[serde(rename = "provider")]
+    pub provider: Option<String>,
     #[serde(rename = "reason")]
     pub reason: Option<String>,
-    #[serde(rename = "request-id")]
+    #[serde(rename = "request_id")]
     pub request_id: Option<String>,
-    #[serde(rename = "sandbox-policy")]
+    #[serde(rename = "response_id")]
+    pub response_id: Option<String>,
+    #[serde(rename = "sandbox_policy")]
     pub sandbox_policy: Option<Value>,
-    #[serde(rename = "schema-version")]
-    pub schema_version: u32,
-    #[serde(rename = "server-name")]
+    #[serde(rename = "schema_version")]
+    pub schema_version: u64,
+    #[serde(rename = "server_name")]
     pub server_name: Option<String>,
-    #[serde(rename = "thread-id")]
-    pub thread_id: String,
-    #[serde(rename = "timestamp")]
-    pub timestamp: String,
-    #[serde(rename = "turn-id")]
-    pub turn_id: Option<String>,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(flatten)]
-    pub extra: ExtraFields,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ModelRequestStartedPayload {
-    #[serde(rename = "attempt")]
-    pub attempt: u32,
-    #[serde(rename = "cwd")]
-    pub cwd: String,
-    #[serde(rename = "event-id")]
-    pub event_id: String,
-    #[serde(rename = "has-output-schema")]
-    pub has_output_schema: bool,
-    #[serde(rename = "model")]
-    pub model: String,
-    #[serde(rename = "model-request-id")]
-    pub model_request_id: String,
-    #[serde(rename = "parallel-tool-calls")]
-    pub parallel_tool_calls: bool,
-    #[serde(rename = "prompt-input-item-count")]
-    pub prompt_input_item_count: u64,
-    #[serde(rename = "provider")]
-    pub provider: String,
-    #[serde(rename = "schema-version")]
-    pub schema_version: u32,
-    #[serde(rename = "thread-id")]
-    pub thread_id: String,
-    #[serde(rename = "timestamp")]
-    pub timestamp: String,
-    #[serde(rename = "tool-count")]
-    pub tool_count: u64,
-    #[serde(rename = "turn-id")]
-    pub turn_id: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(flatten)]
-    pub extra: ExtraFields,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ModelResponseCompletedPayload {
-    #[serde(rename = "attempt")]
-    pub attempt: u32,
-    #[serde(rename = "cwd")]
-    pub cwd: String,
-    #[serde(rename = "event-id")]
-    pub event_id: String,
-    #[serde(rename = "model-request-id")]
-    pub model_request_id: String,
-    #[serde(rename = "needs-follow-up")]
-    pub needs_follow_up: bool,
-    #[serde(rename = "response-id")]
-    pub response_id: String,
-    #[serde(rename = "schema-version")]
-    pub schema_version: u32,
-    #[serde(rename = "thread-id")]
-    pub thread_id: String,
-    #[serde(rename = "timestamp")]
-    pub timestamp: String,
-    #[serde(rename = "token-usage")]
-    pub token_usage: Option<TokenUsage>,
-    #[serde(rename = "turn-id")]
-    pub turn_id: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(flatten)]
-    pub extra: ExtraFields,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SessionEndPayload {
-    #[serde(rename = "cwd")]
-    pub cwd: String,
-    #[serde(rename = "event-id")]
-    pub event_id: String,
-    #[serde(rename = "schema-version")]
-    pub schema_version: u32,
-    #[serde(rename = "session-source")]
-    pub session_source: String,
-    #[serde(rename = "thread-id")]
-    pub thread_id: String,
-    #[serde(rename = "timestamp")]
-    pub timestamp: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(flatten)]
-    pub extra: ExtraFields,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SessionStartPayload {
-    #[serde(rename = "cwd")]
-    pub cwd: String,
-    #[serde(rename = "event-id")]
-    pub event_id: String,
-    #[serde(rename = "schema-version")]
-    pub schema_version: u32,
-    #[serde(rename = "session-source")]
-    pub session_source: String,
-    #[serde(rename = "thread-id")]
-    pub thread_id: String,
-    #[serde(rename = "timestamp")]
-    pub timestamp: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(flatten)]
-    pub extra: ExtraFields,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ToolCallFinishedPayload {
-    #[serde(rename = "attempt")]
-    pub attempt: u32,
-    #[serde(rename = "call-id")]
-    pub call_id: String,
-    #[serde(rename = "cwd")]
-    pub cwd: String,
-    #[serde(rename = "duration-ms")]
-    pub duration_ms: u64,
-    #[serde(rename = "event-id")]
-    pub event_id: String,
-    #[serde(rename = "model-request-id")]
-    pub model_request_id: String,
-    #[serde(rename = "output-bytes")]
-    pub output_bytes: u64,
-    #[serde(rename = "output-preview")]
-    pub output_preview: Option<String>,
-    #[serde(rename = "schema-version")]
-    pub schema_version: u32,
+    #[serde(rename = "session_id")]
+    pub session_id: String,
+    #[serde(rename = "session_source")]
+    pub session_source: Option<String>,
     #[serde(rename = "status")]
-    pub status: ToolCallStatus,
+    pub status: Option<String>,
+    #[serde(rename = "subagent")]
+    pub subagent: Option<String>,
     #[serde(rename = "success")]
-    pub success: bool,
-    #[serde(rename = "thread-id")]
-    pub thread_id: String,
+    pub success: Option<bool>,
     #[serde(rename = "timestamp")]
     pub timestamp: String,
-    #[serde(rename = "tool-name")]
-    pub tool_name: String,
-    #[serde(rename = "turn-id")]
-    pub turn_id: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
-    #[serde(flatten)]
-    pub extra: ExtraFields,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ToolCallStartedPayload {
-    #[serde(rename = "attempt")]
-    pub attempt: u32,
-    #[serde(rename = "call-id")]
-    pub call_id: String,
-    #[serde(rename = "cwd")]
-    pub cwd: String,
-    #[serde(rename = "event-id")]
-    pub event_id: String,
-    #[serde(rename = "model-request-id")]
-    pub model_request_id: String,
-    #[serde(rename = "schema-version")]
-    pub schema_version: u32,
-    #[serde(rename = "thread-id")]
-    pub thread_id: String,
-    #[serde(rename = "timestamp")]
-    pub timestamp: String,
-    #[serde(rename = "tool-name")]
-    pub tool_name: String,
-    #[serde(rename = "turn-id")]
-    pub turn_id: String,
-    #[serde(rename = "type")]
-    pub event_type: String,
+    #[serde(rename = "title")]
+    pub title: Option<String>,
+    #[serde(rename = "token_usage")]
+    pub token_usage: Option<Value>,
+    #[serde(rename = "tool_count")]
+    pub tool_count: Option<u64>,
+    #[serde(rename = "tool_input")]
+    pub tool_input: Option<Value>,
+    #[serde(rename = "tool_name")]
+    pub tool_name: Option<String>,
+    #[serde(rename = "tool_response")]
+    pub tool_response: Option<Value>,
+    #[serde(rename = "tool_use_id")]
+    pub tool_use_id: Option<String>,
+    #[serde(rename = "transcript_path")]
+    pub transcript_path: String,
+    #[serde(rename = "trigger")]
+    pub trigger: Option<String>,
+    #[serde(rename = "turn_id")]
+    pub turn_id: Option<String>,
+    #[serde(rename = "xcodex_event_type")]
+    pub xcodex_event_type: String,
     #[serde(flatten)]
     pub extra: ExtraFields,
 }

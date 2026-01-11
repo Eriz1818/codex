@@ -5,8 +5,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // This file is installed under `$CODEX_HOME/hooks/templates/rust/` and is meant
     // as a starting point you copy and edit.
-    let event = codex_hooks_sdk::read_event_from_stdin()?;
-    let payload = event.to_json_value();
+    let payload = codex_hooks_sdk::read_payload_json_from_stdin()?;
 
     let codex_home = std::env::var("CODEX_HOME")
         .or_else(|_| std::env::var("HOME").map(|home| format!("{home}/.xcodex")))

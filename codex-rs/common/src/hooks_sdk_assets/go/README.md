@@ -4,7 +4,7 @@ This folder is part of the **xCodex hooks kit**. It is installed under
 `$CODEX_HOME/hooks/templates/go/` by:
 
 ```sh
-xcodex hooks install go
+xcodex hooks install sdks go
 ```
 
 Docs:

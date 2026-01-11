@@ -6,8 +6,6 @@
 //!     > common/src/hooks_sdk_assets/python/xcodex_hooks_types.py
 
 #[cfg(feature = "hooks-schema")]
-use std::collections::BTreeMap;
-#[cfg(feature = "hooks-schema")]
 use std::collections::BTreeSet;
 #[cfg(feature = "hooks-schema")]
 use std::fmt::Write;
@@ -52,12 +50,7 @@ fn generate_python_types(schema: &Value) -> Result<String, String> {
         .and_then(Value::as_object)
         .ok_or("expected definitions object")?;
 
-    let one_of = schema
-        .get("oneOf")
-        .and_then(Value::as_array)
-        .ok_or("expected top-level oneOf array")?;
-
-    let root_required: BTreeSet<String> = schema
+    let required: BTreeSet<String> = schema
         .get("required")
         .and_then(Value::as_array)
         .map(|arr| {
@@ -68,21 +61,10 @@ fn generate_python_types(schema: &Value) -> Result<String, String> {
         })
         .unwrap_or_default();
 
-    let mut variants: BTreeMap<String, Value> = BTreeMap::new();
-    for variant in one_of {
-        let properties = variant
-            .get("properties")
-            .and_then(Value::as_object)
-            .ok_or("variant missing properties object")?;
-        let ty = properties
-            .get("type")
-            .and_then(|v| v.get("enum"))
-            .and_then(Value::as_array)
-            .and_then(|arr| arr.first())
-            .and_then(Value::as_str)
-            .ok_or("variant type property missing enum string")?;
-        variants.insert(ty.to_string(), variant.clone());
-    }
+    let properties = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or("expected top-level properties object")?;
 
     let mut out = String::new();
     writeln!(
@@ -92,7 +74,7 @@ fn generate_python_types(schema: &Value) -> Result<String, String> {
 xCodex hooks kit: Python typed helpers for external hooks.\n\n\
 This file is generated from the Rust hook payload schema (source-of-truth).\n\
 It is installed into `$CODEX_HOME/hooks/` by:\n\
-  - `xcodex hooks install python`\n\n\
+  - `xcodex hooks install sdks python`\n\n\
 Re-generate from the repo:\n\
   cd codex-rs\n\
   cargo run -p codex-core --bin hooks_python_types --features hooks-schema --quiet \\\n\
@@ -121,90 +103,26 @@ else:
 "#,
     );
 
-    if let Some(approval_kind) = definitions.get("ApprovalKind").and_then(py_string_union) {
-        writeln!(&mut out, "\nApprovalKind = {approval_kind}")
-            .map_err(|_| "formatting failed".to_string())?;
-    } else {
-        writeln!(&mut out, "\nApprovalKind = str").map_err(|_| "formatting failed".to_string())?;
-    }
-
-    if let Some(tool_call_status) = definitions.get("ToolCallStatus").and_then(py_string_union) {
-        writeln!(&mut out, "\nToolCallStatus = {tool_call_status}")
-            .map_err(|_| "formatting failed".to_string())?;
-    } else {
-        writeln!(&mut out, "\nToolCallStatus = str")
-            .map_err(|_| "formatting failed".to_string())?;
-    }
-
-    writeln!(
-        &mut out,
-        "\nHookPayloadBase = TypedDict(\n\
-    \"HookPayloadBase\",\n\
-    {{\n\
-        \"schema-version\": Required[int],\n\
-        \"event-id\": Required[str],\n\
-        \"timestamp\": Required[str],\n\
-    }},\n\
-    total=False,\n\
-)\n"
-    )
-    .map_err(|_| "formatting failed".to_string())?;
-
-    let mut variant_names = Vec::new();
-    for (event_type, variant) in &variants {
-        let name = format!("{}Payload", pascal_case(event_type));
-        variant_names.push(name.clone());
-
-        let properties = variant
-            .get("properties")
-            .and_then(Value::as_object)
-            .ok_or("variant missing properties object")?;
-
-        let mut required: BTreeSet<String> = root_required.clone();
-        if let Some(arr) = variant.get("required").and_then(Value::as_array) {
-            for key in arr.iter().filter_map(Value::as_str) {
-                required.insert(key.to_string());
-            }
-        }
-
-        writeln!(&mut out, "{name} = TypedDict(").map_err(|_| "formatting failed".to_string())?;
-        writeln!(&mut out, "    \"{name}\",").map_err(|_| "formatting failed".to_string())?;
-        writeln!(&mut out, "    {{").map_err(|_| "formatting failed".to_string())?;
-
-        writeln!(
-            &mut out,
-            "        \"type\": Required[Literal[\"{event_type}\"]],"
-        )
+    writeln!(&mut out, "\nHookPayload = TypedDict(")
         .map_err(|_| "formatting failed".to_string())?;
+    writeln!(&mut out, "    \"HookPayload\",").map_err(|_| "formatting failed".to_string())?;
+    writeln!(&mut out, "    {{").map_err(|_| "formatting failed".to_string())?;
 
-        let mut keys: Vec<(&String, &Value)> = properties.iter().collect();
-        keys.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
-
-        for (key, key_schema) in keys {
-            if key == "type" || key == "schema-version" || key == "event-id" || key == "timestamp" {
-                continue;
-            }
-            let annotation = if required.contains(key.as_str()) {
-                "Required"
-            } else {
-                "NotRequired"
-            };
-            let py_ty = py_type_for_schema(key_schema, definitions);
-            writeln!(&mut out, "        \"{key}\": {annotation}[{py_ty}],")
-                .map_err(|_| "formatting failed".to_string())?;
-        }
-
-        writeln!(&mut out, "    }},\n    total=False,\n)\n")
+    let mut keys: Vec<(&String, &Value)> = properties.iter().collect();
+    keys.sort_by(|(a, _), (b, _)| a.as_str().cmp(b.as_str()));
+    for (key, key_schema) in keys {
+        let annotation = if required.contains(key.as_str()) {
+            "Required"
+        } else {
+            "NotRequired"
+        };
+        let py_ty = py_type_for_schema(key_schema, definitions);
+        writeln!(&mut out, "        \"{key}\": {annotation}[{py_ty}],")
             .map_err(|_| "formatting failed".to_string())?;
     }
 
-    writeln!(&mut out, "HookPayload = Union[").map_err(|_| "formatting failed".to_string())?;
-    writeln!(&mut out, "    HookPayloadBase,").map_err(|_| "formatting failed".to_string())?;
-    for name in &variant_names {
-        writeln!(&mut out, "    {name},").map_err(|_| "formatting failed".to_string())?;
-    }
-    writeln!(&mut out, "    Dict[str, Any],").map_err(|_| "formatting failed".to_string())?;
-    writeln!(&mut out, "]\n").map_err(|_| "formatting failed".to_string())?;
+    writeln!(&mut out, "    }},\n    total=False,\n)\n")
+        .map_err(|_| "formatting failed".to_string())?;
 
     Ok(out)
 }
@@ -247,17 +165,11 @@ fn py_string_literals(schema: &Value) -> Option<Vec<String>> {
 #[cfg(feature = "hooks-schema")]
 fn py_type_for_schema(schema: &Value, definitions: &serde_json::Map<String, Value>) -> String {
     if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
-        if let Some((_, name)) = reference.rsplit_once('/') {
-            match name {
-                "ApprovalKind" => return "ApprovalKind".to_string(),
-                "ToolCallStatus" => return "ToolCallStatus".to_string(),
-                _ => {}
-            }
-            if let Some(def) = definitions.get(name)
-                && let Some(union) = py_string_union(def)
-            {
-                return union;
-            }
+        if let Some((_, name)) = reference.rsplit_once('/')
+            && let Some(def) = definitions.get(name)
+            && let Some(union) = py_string_union(def)
+        {
+            return union;
         }
         return "Any".to_string();
     }
@@ -335,25 +247,4 @@ fn py_type_for_schema(schema: &Value, definitions: &serde_json::Map<String, Valu
     }
 
     "Any".to_string()
-}
-
-#[cfg(feature = "hooks-schema")]
-fn pascal_case(s: &str) -> String {
-    let mut out = String::new();
-    let mut upper_next = true;
-    for ch in s.chars() {
-        if ch == '-' || ch == '_' || ch == ' ' {
-            upper_next = true;
-            continue;
-        }
-        if upper_next {
-            for up in ch.to_uppercase() {
-                out.push(up);
-            }
-            upper_next = false;
-        } else {
-            out.push(ch);
-        }
-    }
-    out
 }
