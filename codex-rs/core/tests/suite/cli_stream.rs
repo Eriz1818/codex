@@ -290,7 +290,7 @@ async fn exec_cli_inproc_hook_event_log_jsonl_logs_tool_call_finished() {
     assert!(
         contents
             .lines()
-            .any(|line| line.contains(r#""type":"tool-call-finished""#)),
+            .any(|line| line.contains(r#""xcodex_event_type":"tool-call-finished""#)),
         "unexpected log contents: {contents:?}"
     );
 }

@@ -48,7 +48,7 @@ import pathlib
 import sys
 
 payload = json.loads(sys.argv[1])
-payload_path = payload.get("payload-path")
+payload_path = payload.get("payload_path") or payload.get("payload-path")
 if payload_path:
     payload = json.loads(pathlib.Path(payload_path).read_text())
 
@@ -100,10 +100,11 @@ async fn hooks_agent_turn_complete_invoked() -> Result<()> {
     let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
     let payload: Value = serde_json::from_str(&hook_payload_raw)?;
 
-    assert_eq!(payload["schema-version"], json!(1));
-    assert_eq!(payload["type"], json!("agent-turn-complete"));
-    assert_eq!(payload["input-messages"], json!(["hello world"]));
-    assert_eq!(payload["last-assistant-message"], json!("Done"));
+    assert_eq!(payload["schema_version"], json!(1));
+    assert_eq!(payload["hook_event_name"], json!("Stop"));
+    assert_eq!(payload["xcodex_event_type"], json!("agent-turn-complete"));
+    assert_eq!(payload["input_messages"], json!(["hello world"]));
+    assert_eq!(payload["last_assistant_message"], json!("Done"));
 
     Ok(())
 }
@@ -159,10 +160,11 @@ async fn hooks_approval_requested_invoked_for_exec() -> Result<()> {
 
     let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
     let payload: Value = serde_json::from_str(&hook_payload_raw)?;
-    assert_eq!(payload["schema-version"], json!(1));
-    assert_eq!(payload["type"], json!("approval-requested"));
+    assert_eq!(payload["schema_version"], json!(1));
+    assert_eq!(payload["hook_event_name"], json!("PermissionRequest"));
+    assert_eq!(payload["xcodex_event_type"], json!("approval-requested"));
     assert_eq!(payload["kind"], json!("exec"));
-    assert_eq!(payload["call-id"], json!(call_id));
+    assert_eq!(payload["call_id"], json!(call_id));
     assert_eq!(payload["command"], args["command"]);
 
     codex
@@ -197,9 +199,10 @@ async fn hooks_session_start_invoked() -> Result<()> {
     let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
     let payload: Value = serde_json::from_str(&hook_payload_raw)?;
 
-    assert_eq!(payload["schema-version"], json!(1));
-    assert_eq!(payload["type"], json!("session-start"));
-    assert_eq!(payload["session-source"], json!("exec"));
+    assert_eq!(payload["schema_version"], json!(1));
+    assert_eq!(payload["hook_event_name"], json!("SessionStart"));
+    assert_eq!(payload["xcodex_event_type"], json!("session-start"));
+    assert_eq!(payload["session_source"], json!("exec"));
 
     Ok(())
 }
@@ -240,11 +243,12 @@ async fn hooks_model_request_started_invoked() -> Result<()> {
     let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
     let payload: Value = serde_json::from_str(&hook_payload_raw)?;
 
-    assert_eq!(payload["schema-version"], json!(1));
-    assert_eq!(payload["type"], json!("model-request-started"));
+    assert_eq!(payload["schema_version"], json!(1));
+    assert_eq!(payload["hook_event_name"], json!("model-request-started"));
+    assert_eq!(payload["xcodex_event_type"], json!("model-request-started"));
     assert_eq!(payload["attempt"], json!(1));
-    assert!(payload["model-request-id"].is_string());
-    assert!(payload["prompt-input-item-count"].as_i64().unwrap_or(0) > 0);
+    assert!(payload["model_request_id"].is_string());
+    assert!(payload["input_item_count"].as_i64().unwrap_or(0) > 0);
 
     Ok(())
 }
@@ -285,13 +289,20 @@ async fn hooks_model_response_completed_invoked() -> Result<()> {
     let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
     let payload: Value = serde_json::from_str(&hook_payload_raw)?;
 
-    assert_eq!(payload["schema-version"], json!(1));
-    assert_eq!(payload["type"], json!("model-response-completed"));
+    assert_eq!(payload["schema_version"], json!(1));
+    assert_eq!(
+        payload["hook_event_name"],
+        json!("model-response-completed")
+    );
+    assert_eq!(
+        payload["xcodex_event_type"],
+        json!("model-response-completed")
+    );
     assert_eq!(payload["attempt"], json!(1));
-    assert!(payload["model-request-id"].is_string());
-    assert_eq!(payload["response-id"], json!("r1"));
-    assert_eq!(payload["needs-follow-up"], json!(false));
-    assert_eq!(payload["token-usage"]["total_tokens"], json!(0));
+    assert!(payload["model_request_id"].is_string());
+    assert_eq!(payload["response_id"], json!("r1"));
+    assert_eq!(payload["needs_follow_up"], json!(false));
+    assert_eq!(payload["token_usage"]["total_tokens"], json!(0));
 
     Ok(())
 }
@@ -352,21 +363,29 @@ async fn hooks_tool_call_started_and_finished_invoked() -> Result<()> {
 
     let started_raw = tokio::fs::read_to_string(&started_file).await?;
     let started_payload: Value = serde_json::from_str(&started_raw)?;
-    assert_eq!(started_payload["schema-version"], json!(1));
-    assert_eq!(started_payload["type"], json!("tool-call-started"));
-    assert_eq!(started_payload["call-id"], json!(call_id));
+    assert_eq!(started_payload["schema_version"], json!(1));
+    assert_eq!(started_payload["hook_event_name"], json!("PreToolUse"));
+    assert_eq!(
+        started_payload["xcodex_event_type"],
+        json!("tool-call-started")
+    );
+    assert_eq!(started_payload["tool_use_id"], json!(call_id));
 
     let finished_raw = tokio::fs::read_to_string(&finished_file).await?;
     let finished_payload: Value = serde_json::from_str(&finished_raw)?;
-    assert_eq!(finished_payload["schema-version"], json!(1));
-    assert_eq!(finished_payload["type"], json!("tool-call-finished"));
-    assert_eq!(finished_payload["call-id"], json!(call_id));
-    assert_eq!(finished_payload["tool-name"], json!("shell"));
+    assert_eq!(finished_payload["schema_version"], json!(1));
+    assert_eq!(finished_payload["hook_event_name"], json!("PostToolUse"));
+    assert_eq!(
+        finished_payload["xcodex_event_type"],
+        json!("tool-call-finished")
+    );
+    assert_eq!(finished_payload["tool_use_id"], json!(call_id));
+    assert_eq!(finished_payload["tool_name"], json!("Bash"));
     assert_eq!(finished_payload["status"], json!("completed"));
-    assert!(finished_payload["duration-ms"].as_u64().is_some());
+    assert!(finished_payload["duration_ms"].as_u64().is_some());
     assert!(finished_payload["success"].is_boolean());
-    assert!(finished_payload["output-bytes"].as_u64().is_some());
-    assert!(finished_payload["output-preview"].is_string());
+    assert!(finished_payload["output_bytes"].as_u64().is_some());
+    assert!(finished_payload["output_preview"].is_string());
 
     Ok(())
 }
@@ -395,9 +414,10 @@ async fn hooks_session_end_invoked() -> Result<()> {
     let hook_payload_raw = tokio::fs::read_to_string(&hook_file).await?;
     let payload: Value = serde_json::from_str(&hook_payload_raw)?;
 
-    assert_eq!(payload["schema-version"], json!(1));
-    assert_eq!(payload["type"], json!("session-end"));
-    assert_eq!(payload["session-source"], json!("exec"));
+    assert_eq!(payload["schema_version"], json!(1));
+    assert_eq!(payload["hook_event_name"], json!("SessionEnd"));
+    assert_eq!(payload["xcodex_event_type"], json!("session-end"));
+    assert_eq!(payload["session_source"], json!("exec"));
 
     Ok(())
 }

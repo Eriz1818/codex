@@ -64,9 +64,11 @@ impl SessionState {
         &mut self,
         usage: &TokenUsage,
         model_context_window: Option<i64>,
+        full_model_context_window: Option<i64>,
     ) {
         self.latest_api_token_usage = Some(usage.clone());
-        self.history.update_token_info(usage, model_context_window);
+        self.history
+            .update_token_info(usage, model_context_window, full_model_context_window);
     }
 
     pub(crate) fn token_info(&self) -> Option<TokenUsageInfo> {
@@ -86,12 +88,17 @@ impl SessionState {
         (self.token_info(), self.latest_rate_limits.clone())
     }
 
-    pub(crate) fn set_token_usage_full(&mut self, context_window: i64) {
+    pub(crate) fn set_token_usage_full(
+        &mut self,
+        context_window: i64,
+        full_model_context_window: Option<i64>,
+    ) {
         self.latest_api_token_usage = Some(TokenUsage {
             total_tokens: context_window,
             ..TokenUsage::default()
         });
-        self.history.set_token_usage_full(context_window);
+        self.history
+            .set_token_usage_full(context_window, full_model_context_window);
     }
 
     pub(crate) fn auto_compact_enabled(&self) -> bool {

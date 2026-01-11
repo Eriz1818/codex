@@ -107,6 +107,8 @@ pub(crate) async fn run_codex_conversation_one_shot(
     // Use a child token so we can stop the delegate after completion without
     // requiring the caller to cancel the parent token.
     let child_cancel = cancel_token.child_token();
+    let parent_session_for_hooks = Arc::clone(&parent_session);
+    let parent_ctx_for_hooks = Arc::clone(&parent_ctx);
     let io = run_codex_conversation_interactive(
         config,
         auth_manager,
@@ -129,21 +131,35 @@ pub(crate) async fn run_codex_conversation_one_shot(
     let (tx_bridge, rx_bridge) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
     let ops_tx = io.tx_sub.clone();
     let io_for_bridge = io;
+    let child_cancel_for_bridge = child_cancel.clone();
     tokio::spawn(async move {
         while let Ok(event) = io_for_bridge.next_event().await {
             let should_shutdown = matches!(
                 event.msg,
                 EventMsg::TaskComplete(_) | EventMsg::TurnAborted(_)
             );
+            let status = if matches!(event.msg, EventMsg::TaskComplete(_)) {
+                Some("completed")
+            } else if matches!(event.msg, EventMsg::TurnAborted(_)) {
+                Some("aborted")
+            } else {
+                None
+            };
             let _ = tx_bridge.send(event).await;
             if should_shutdown {
+                parent_session_for_hooks.user_hooks().subagent_stop(
+                    parent_session_for_hooks.thread_id(),
+                    parent_ctx_for_hooks.cwd.display().to_string(),
+                    "review".to_string(),
+                    status.unwrap_or("other").to_string(),
+                );
                 let _ = ops_tx
                     .send(Submission {
                         id: "shutdown".to_string(),
                         op: Op::Shutdown {},
                     })
                     .await;
-                child_cancel.cancel();
+                child_cancel_for_bridge.cancel();
                 break;
             }
         }

@@ -182,7 +182,7 @@ pub struct Config {
     ///
     /// Hooks are fire-and-forget: failures are logged and do not affect the
     /// session. Hook commands receive event JSON on stdin. For large payloads,
-    /// stdin contains a small JSON envelope including `payload-path` pointing
+    /// stdin contains a small JSON envelope including `payload_path` pointing
     /// at the full payload under CODEX_HOME.
     pub hooks: HooksConfig,
 
@@ -1116,6 +1116,22 @@ pub struct HooksConfig {
     #[serde(default)]
     pub session_end: Vec<Vec<String>>,
 
+    /// Hooks invoked when the user submits a prompt/input.
+    #[serde(default)]
+    pub user_prompt_submit: Vec<Vec<String>>,
+
+    /// Hooks invoked before Codex performs a compact operation.
+    #[serde(default)]
+    pub pre_compact: Vec<Vec<String>>,
+
+    /// Hooks invoked when Codex emits a notification.
+    #[serde(default)]
+    pub notification: Vec<Vec<String>>,
+
+    /// Hooks invoked when a subagent task completes.
+    #[serde(default)]
+    pub subagent_stop: Vec<Vec<String>>,
+
     /// Hooks invoked immediately before issuing a model request.
     #[serde(default)]
     pub model_request_started: Vec<Vec<String>>,
@@ -1131,6 +1147,13 @@ pub struct HooksConfig {
     /// Hooks invoked when a tool call has finished (success/failure/aborted).
     #[serde(default)]
     pub tool_call_finished: Vec<Vec<String>>,
+
+    /// Command hooks with matcher + per-hook options.
+    ///
+    /// This is a higher-level (Claude-style) config surface that complements the
+    /// legacy per-event argv arrays above.
+    #[serde(default)]
+    pub command: HooksCommandConfig,
 
     /// Enable the in-process (Rust) hook that appends compact `tool_call_finished`
     /// summaries to `CODEX_HOME/hooks-tool-calls.log`.
@@ -1151,6 +1174,17 @@ pub struct HooksConfig {
     #[serde(default)]
     pub inproc: Vec<String>,
 
+    /// Gate user-provided in-process hooks (for example, experimental PyO3
+    /// hooks) behind an explicit acknowledgement.
+    ///
+    /// First-party in-process hooks remain configurable without this flag.
+    #[serde(default)]
+    pub enable_unsafe_inproc: bool,
+
+    /// Experimental PyO3 hook configuration.
+    #[serde(default)]
+    pub pyo3: HooksPyo3Config,
+
     /// Long-lived external hook host (optional).
     ///
     /// This is a separate provider from the per-event external hooks configured
@@ -1163,13 +1197,48 @@ pub struct HooksConfig {
     ///
     /// When the serialized payload exceeds this threshold, Codex writes it to a
     /// file under CODEX_HOME and writes a small JSON envelope to stdin that
-    /// includes `payload-path`.
+    /// includes `payload_path`.
     #[serde(default = "HooksConfig::default_max_stdin_payload_bytes")]
     pub max_stdin_payload_bytes: usize,
 
     /// Keep only the most recent N payload/log files (global) under CODEX_HOME.
     #[serde(default = "HooksConfig::default_keep_last_n_payloads")]
     pub keep_last_n_payloads: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct HooksPyo3Config {
+    /// Path to a Python file containing the hook implementation.
+    ///
+    /// The module must define the configured callable (default: `on_event`).
+    #[serde(default)]
+    pub script_path: Option<String>,
+
+    /// Name of the callable in the module to invoke for each hook event.
+    ///
+    /// Signature: `callable(event: dict) -> None`
+    #[serde(default)]
+    pub callable: Option<String>,
+
+    /// Optional batch size to reduce Rust→Python calls for high-volume events.
+    ///
+    /// When set to N>1 and the script defines `on_events(events: list[dict]) -> None`,
+    /// Codex will call `on_events` with batches of up to N events (preserving order).
+    /// If the script does not define `on_events`, Codex falls back to per-event `callable`.
+    #[serde(default)]
+    pub batch_size: Option<usize>,
+
+    /// Optional timeout for a single PyO3 hook invocation (seconds).
+    ///
+    /// When unset, Codex uses the default in-process hook timeout.
+    #[serde(default)]
+    pub timeout_sec: Option<u64>,
+
+    /// Optional matcher filters to restrict which events are delivered to PyO3.
+    ///
+    /// When unset/empty, all events are delivered.
+    #[serde(default)]
+    pub filters: HookEventFiltersConfig,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -1197,6 +1266,109 @@ pub struct HookHostConfig {
     /// When unset, the host inherits the session sandbox policy.
     #[serde(default)]
     pub sandbox_mode: Option<SandboxMode>,
+
+    /// Optional timeout for writing a single hook event to the host stdin (seconds).
+    ///
+    /// When unset, writes are best-effort and may block until the host is killed.
+    #[serde(default)]
+    pub timeout_sec: Option<u64>,
+
+    /// Optional matcher filters to restrict which events are delivered to the hook host.
+    ///
+    /// When unset/empty, all events are delivered.
+    #[serde(default)]
+    pub filters: HookEventFiltersConfig,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct HooksCommandConfig {
+    /// Default timeout applied to command hooks when `timeout_sec` is unset (seconds).
+    #[serde(default = "HooksCommandConfig::default_timeout_sec")]
+    pub default_timeout_sec: u64,
+
+    /// Per-event matcher entries.
+    ///
+    /// Keys are event names (canonical xcodex event keys or aliases like `PostToolUse`).
+    /// Values are arrays of matchers, each with an array of hooks.
+    #[serde(flatten)]
+    pub events: HashMap<String, Vec<HooksCommandMatcherConfig>>,
+}
+
+impl HooksCommandConfig {
+    fn default_timeout_sec() -> u64 {
+        30
+    }
+}
+
+impl Default for HooksCommandConfig {
+    fn default() -> Self {
+        Self {
+            default_timeout_sec: Self::default_timeout_sec(),
+            events: HashMap::new(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct HooksCommandMatcherConfig {
+    /// Matcher expression using Claude semantics (`*`, exact, or regex).
+    #[serde(default)]
+    pub matcher: Option<String>,
+
+    /// Hooks to execute when this matcher matches.
+    #[serde(default)]
+    pub hooks: Vec<HooksCommandHookConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct HooksCommandHookConfig {
+    /// Payload format to send on stdin.
+    ///
+    /// Deprecated: payloads are always emitted as a Claude-first superset with snake_case keys.
+    #[serde(default)]
+    pub payload: HookPayloadFormat,
+
+    /// Execute a command via argv.
+    #[serde(default)]
+    pub argv: Option<Vec<String>>,
+
+    /// Execute a command string via a shell wrapper (`bash -lc ...` / `cmd.exe /C ...`).
+    #[serde(default)]
+    pub command: Option<String>,
+
+    /// Optional timeout for this hook (seconds). When unset, uses `hooks.command.default_timeout_sec`.
+    #[serde(default)]
+    pub timeout_sec: Option<u64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum HookPayloadFormat {
+    Xcodex,
+    Claude,
+}
+
+impl Default for HookPayloadFormat {
+    fn default() -> Self {
+        Self::Xcodex
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub struct HookEventFiltersConfig {
+    /// Per-event matcher entries.
+    ///
+    /// Keys are event names (canonical xcodex event keys or aliases like `PostToolUse`).
+    /// Values are arrays of matchers; an event is delivered when any matcher matches.
+    #[serde(flatten)]
+    pub events: HashMap<String, Vec<HookEventMatcherConfig>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct HookEventMatcherConfig {
+    /// Matcher expression using Claude semantics (`*`, exact, or regex).
+    #[serde(default)]
+    pub matcher: Option<String>,
 }
 
 impl HooksConfig {
@@ -1216,12 +1388,19 @@ impl Default for HooksConfig {
             approval_requested: Vec::new(),
             session_start: Vec::new(),
             session_end: Vec::new(),
+            user_prompt_submit: Vec::new(),
+            pre_compact: Vec::new(),
+            notification: Vec::new(),
+            subagent_stop: Vec::new(),
             model_request_started: Vec::new(),
             model_response_completed: Vec::new(),
             tool_call_started: Vec::new(),
             tool_call_finished: Vec::new(),
+            command: HooksCommandConfig::default(),
             inproc_tool_call_summary: false,
             inproc: Vec::new(),
+            enable_unsafe_inproc: false,
+            pyo3: HooksPyo3Config::default(),
             host: HookHostConfig::default(),
             max_stdin_payload_bytes: Self::default_max_stdin_payload_bytes(),
             keep_last_n_payloads: Self::default_keep_last_n_payloads(),

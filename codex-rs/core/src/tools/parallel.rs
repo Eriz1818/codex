@@ -10,6 +10,8 @@ use tracing::instrument;
 use tracing::trace_span;
 use uuid::Uuid;
 
+use serde_json::Value;
+
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::error::CodexErr;
@@ -66,6 +68,7 @@ impl ToolCallRuntime {
         let tool_name = call.tool_name.clone();
         let call_id = call.call_id.clone();
         let call_for_task = call.clone();
+        let tool_input = tool_input_value(&call.payload);
 
         let router = Arc::clone(&self.router);
         let session = Arc::clone(&self.session);
@@ -87,6 +90,7 @@ impl ToolCallRuntime {
             attempt,
             tool_name.clone(),
             call_id.clone(),
+            tool_input.clone(),
         );
 
         let dispatch_span = trace_span!(
@@ -139,6 +143,15 @@ impl ToolCallRuntime {
                     if matches!(status, ToolCallStatus::Aborted) {
                         success = false;
                     }
+                    let tool_response = Some(serde_json::json!({
+                        "status": match status {
+                            ToolCallStatus::Completed => "completed",
+                            ToolCallStatus::Aborted => "aborted",
+                        },
+                        "success": success,
+                        "output_bytes": output_bytes,
+                        "output_preview": output_preview,
+                    }));
                     hook_session.user_hooks().tool_call_finished(
                         thread_id,
                         turn.sub_id.clone(),
@@ -152,10 +165,19 @@ impl ToolCallRuntime {
                         success,
                         output_bytes,
                         output_preview,
+                        tool_input.clone(),
+                        tool_response,
                     );
                 }
                 Err(message) => {
                     let message = message.to_string();
+                    let preview = truncate_preview(&message, TOOL_OUTPUT_PREVIEW_BYTES);
+                    let tool_response = Some(serde_json::json!({
+                        "status": "completed",
+                        "success": false,
+                        "output_bytes": message.len(),
+                        "output_preview": preview,
+                    }));
                     hook_session.user_hooks().tool_call_finished(
                         thread_id,
                         turn.sub_id.clone(),
@@ -168,7 +190,9 @@ impl ToolCallRuntime {
                         duration_ms,
                         false,
                         message.len(),
-                        Some(truncate_preview(&message, TOOL_OUTPUT_PREVIEW_BYTES)),
+                        Some(preview),
+                        tool_input,
+                        tool_response,
                     );
                 }
             }
@@ -183,6 +207,36 @@ impl ToolCallRuntime {
 }
 
 const TOOL_OUTPUT_PREVIEW_BYTES: usize = 512;
+
+fn tool_input_value(payload: &ToolPayload) -> Option<Value> {
+    match payload {
+        ToolPayload::Function { arguments } => serde_json::from_str(arguments)
+            .or_else(|_| Ok::<Value, serde_json::Error>(Value::String(arguments.clone())))
+            .ok(),
+        ToolPayload::Custom { input } => serde_json::from_str(input)
+            .or_else(|_| Ok::<Value, serde_json::Error>(Value::String(input.clone())))
+            .ok(),
+        ToolPayload::LocalShell { params } => Some(serde_json::json!({
+            "command": params.command,
+            "workdir": params.workdir,
+            "timeout_ms": params.timeout_ms,
+        })),
+        ToolPayload::Mcp {
+            server,
+            tool,
+            raw_arguments,
+        } => {
+            let args = serde_json::from_str(raw_arguments)
+                .or_else(|_| Ok::<Value, serde_json::Error>(Value::String(raw_arguments.clone())))
+                .unwrap_or(Value::Null);
+            Some(serde_json::json!({
+                "server": server,
+                "tool": tool,
+                "arguments": args,
+            }))
+        }
+    }
+}
 
 fn truncate_preview(text: &str, max_bytes: usize) -> String {
     if text.len() <= max_bytes {

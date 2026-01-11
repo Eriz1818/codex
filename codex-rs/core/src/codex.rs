@@ -489,6 +489,10 @@ pub(crate) struct SessionSettingsUpdate {
 }
 
 impl Session {
+    pub(crate) fn thread_id(&self) -> String {
+        self.conversation_id.to_string()
+    }
+
     /// Don't expand the number of mutated arguments on config. We are in the process of getting rid of it.
     fn build_per_turn_config(session_configuration: &SessionConfiguration) -> Config {
         // todo(aibrahim): store this state somewhere else so we don't need to mut config
@@ -1441,12 +1445,17 @@ impl Session {
         token_usage: Option<&TokenUsage>,
     ) {
         let model_context_window = turn_context.client.get_model_context_window();
+        let full_model_context_window = turn_context.client.get_full_model_context_window();
         let warning_message = 'warning: {
             let mut state = self.state.lock().await;
             let Some(token_usage) = token_usage else {
                 break 'warning None;
             };
-            state.update_token_info_from_usage(token_usage, model_context_window);
+            state.update_token_info_from_usage(
+                token_usage,
+                model_context_window,
+                full_model_context_window,
+            );
 
             let Some(context_window) = model_context_window.filter(|window| *window > 0) else {
                 break 'warning None;
@@ -1510,6 +1519,7 @@ impl Session {
                 total_token_usage: TokenUsage::default(),
                 last_token_usage: TokenUsage::default(),
                 model_context_window: None,
+                full_model_context_window: None,
             });
 
             info.last_token_usage = TokenUsage {
@@ -1519,6 +1529,10 @@ impl Session {
 
             if info.model_context_window.is_none() {
                 info.model_context_window = turn_context.client.get_model_context_window();
+            }
+            if info.full_model_context_window.is_none() {
+                info.full_model_context_window =
+                    turn_context.client.get_full_model_context_window();
             }
 
             state.set_token_info(Some(info));
@@ -1600,10 +1614,11 @@ impl Session {
 
     pub(crate) async fn set_total_tokens_full(&self, turn_context: &TurnContext) {
         let context_window = turn_context.client.get_model_context_window();
+        let full_model_context_window = turn_context.client.get_full_model_context_window();
         if let Some(context_window) = context_window {
             {
                 let mut state = self.state.lock().await;
-                state.set_token_usage_full(context_window);
+                state.set_token_usage_full(context_window, full_model_context_window);
             }
             self.send_token_count_event(turn_context).await;
         }
@@ -2082,6 +2097,22 @@ mod handlers {
             .get_otel_manager()
             .user_prompt(&items);
 
+        let prompt = items
+            .iter()
+            .filter_map(|item| match item {
+                UserInput::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !prompt.trim().is_empty() {
+            sess.user_hooks().user_prompt_submit(
+                sess.conversation_id.to_string(),
+                current_context.cwd.display().to_string(),
+                prompt,
+            );
+        }
+
         // Attempt to inject input into current task
         if let Err(items) = sess.inject_input(items).await {
             if let Some(env_item) =
@@ -2431,6 +2462,11 @@ mod handlers {
 
     pub async fn compact(sess: &Arc<Session>, sub_id: String) {
         let turn_context = sess.new_default_turn_with_sub_id(sub_id).await;
+        sess.user_hooks().pre_compact(
+            sess.conversation_id.to_string(),
+            turn_context.cwd.display().to_string(),
+            "manual".to_string(),
+        );
 
         sess.spawn_task(
             Arc::clone(&turn_context),
@@ -2849,6 +2885,11 @@ pub(crate) async fn run_task(
 }
 
 async fn run_auto_compact(sess: &Arc<Session>, turn_context: &Arc<TurnContext>) {
+    sess.user_hooks().pre_compact(
+        sess.conversation_id.to_string(),
+        turn_context.cwd.display().to_string(),
+        "auto".to_string(),
+    );
     if should_use_remote_compact_task(sess.as_ref(), &turn_context.client.get_provider()) {
         run_inline_remote_auto_compact_task(Arc::clone(sess), Arc::clone(turn_context)).await;
     } else {
@@ -3390,6 +3431,7 @@ mod tests {
                 total_tokens: 7,
             },
             model_context_window: Some(1_000),
+            full_model_context_window: Some(1_000),
         };
         let info2 = TokenUsageInfo {
             total_token_usage: TokenUsage {
@@ -3407,6 +3449,7 @@ mod tests {
                 total_tokens: 35,
             },
             model_context_window: Some(2_000),
+            full_model_context_window: Some(2_000),
         };
 
         rollout_items.push(RolloutItem::EventMsg(EventMsg::TokenCount(
