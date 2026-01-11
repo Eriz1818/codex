@@ -382,8 +382,7 @@ struct HooksPyo3BootstrapCommand {
 
     /// Git ref to checkout and build (commit hash, tag, or branch).
     ///
-    /// If omitted, the build flow will prompt (interactive) and will always show the resolved ref
-    /// in the final confirmation screen.
+    /// If omitted, defaults to a pinned commit (use `--ref` to override).
     #[arg(long = "ref", value_name = "REF")]
     git_ref: Option<String>,
 
@@ -1735,6 +1734,10 @@ fn pyo3_bootstrap_default_repo_url() -> &'static str {
     "https://github.com/Eriz1818/xCodex.git"
 }
 
+fn pyo3_bootstrap_default_git_ref() -> &'static str {
+    "31aadee0612bd56d81e22b3973fbdd44d4b5729f"
+}
+
 fn pyo3_bootstrap_issues_url() -> &'static str {
     "https://github.com/Eriz1818/xCodex/issues/new"
 }
@@ -1913,6 +1916,7 @@ fn run_hooks_pyo3_doctor(
     println!("Planned build defaults:");
     println!("- Repo URL: {repo_url}");
     println!("- Repo dir: {}", repo_dir.display());
+    println!("- Git ref: {}", pyo3_bootstrap_default_git_ref());
     println!("- Python (PYO3_PYTHON): {}", python.display());
     println!("- Profile: release");
     println!("- Install dir: {}", install_dir.display());
@@ -1976,18 +1980,10 @@ fn run_hooks_pyo3_bootstrap(
 
     let python = resolve_default_pyo3_python(args.python.take(), interactive)?;
 
-    let git_ref = match args.git_ref.take() {
-        Some(git_ref) => Some(git_ref),
-        None => {
-            if interactive {
-                let line =
-                    prompt_line("Git ref to build (commit/tag/branch; empty = default branch): ")?;
-                if line.is_empty() { None } else { Some(line) }
-            } else {
-                None
-            }
-        }
-    };
+    let git_ref = args
+        .git_ref
+        .take()
+        .unwrap_or_else(|| pyo3_bootstrap_default_git_ref().to_string());
 
     let profile = args.profile;
     let bin_name = args.bin_name;
@@ -1997,10 +1993,7 @@ fn run_hooks_pyo3_bootstrap(
     println!("Plan:");
     println!("- Repo URL: {repo_url}");
     println!("- Repo dir: {}", repo_dir.display());
-    println!(
-        "- Git ref: {}",
-        git_ref.as_deref().unwrap_or("<default branch>")
-    );
+    println!("- Git ref: {git_ref}");
     println!("- Python (PYO3_PYTHON): {}", python.display());
     println!(
         "- Profile: {}",
@@ -2031,10 +2024,7 @@ fn run_hooks_pyo3_bootstrap(
     transcript.push_str("xcodex hooks build pyo3 report\n");
     transcript.push_str(&format!("repo_url={repo_url}\n"));
     transcript.push_str(&format!("repo_dir={}\n", repo_dir.display()));
-    transcript.push_str(&format!(
-        "git_ref={}\n",
-        git_ref.as_deref().unwrap_or("<default branch>")
-    ));
+    transcript.push_str(&format!("git_ref={git_ref}\n"));
     transcript.push_str(&format!("python={}\n", python.display()));
     transcript.push_str(&format!(
         "profile={}\n",
@@ -2134,9 +2124,9 @@ fn run_hooks_pyo3_bootstrap(
         transcript.push('\n');
     }
 
-    if let Some(git_ref) = git_ref.as_deref() {
+    {
         let mut cmd = std::process::Command::new("git");
-        cmd.current_dir(&repo_dir).args(["checkout", git_ref]);
+        cmd.current_dir(&repo_dir).args(["checkout", &git_ref]);
         let printed = format_command(&cmd);
         transcript.push_str(&format!("$ {printed}\n"));
         match run_command_capture(cmd) {
