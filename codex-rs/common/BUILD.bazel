@@ -8,5 +8,14 @@ codex_rust_crate(
         "elapsed",
         "sandbox_summary",
     ],
-    compile_data = ["src/whats_new.md"],
+    compile_data = ["src/whats_new.md"]
+        + glob([
+            "src/hooks_samples_assets/**",
+            "src/hooks_sdk_assets/**",
+        ])
+        + [
+            "//codex-rs/hooks-sdk:Cargo.install.toml",
+            "//codex-rs/hooks-sdk:src/generated.rs",
+            "//codex-rs/hooks-sdk:src/lib.rs",
+        ],
 )
