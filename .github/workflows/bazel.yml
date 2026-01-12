@@ -22,19 +22,15 @@ jobs:
       matrix:
         include:
           # macOS
-          - os: macos-15-xlarge
+          - os: macos-latest
             target: aarch64-apple-darwin
-          - os: macos-15-xlarge
+          - os: macos-latest
             target: x86_64-apple-darwin
 
           # Linux
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-          - os: ubuntu-24.04
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-          - os: ubuntu-24.04
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
           # TODO: Enable Windows once we fix the toolchain issues there.
           #- os: windows-latest
@@ -115,9 +111,23 @@ jobs:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         shell: bash
         run: |
-          bazel $BAZEL_STARTUP_ARGS --bazelrc=.github/workflows/ci.bazelrc test //... \
-            --build_metadata=REPO_URL=https://github.com/openai/codex.git \
-            --build_metadata=COMMIT_SHA=$(git rev-parse HEAD) \
-            --build_metadata=ROLE=CI \
-            --build_metadata=VISIBILITY=PUBLIC \
-            "--remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+          set -euo pipefail
+
+          args=(
+            $BAZEL_STARTUP_ARGS
+            --bazelrc=.github/workflows/ci.bazelrc
+            test
+            //...
+            --build_metadata=REPO_URL=https://github.com/Eriz1818/xCodex.git
+            --build_metadata=COMMIT_SHA=$(git rev-parse HEAD)
+            --build_metadata=ROLE=CI
+            --build_metadata=VISIBILITY=PUBLIC
+          )
+
+          if [[ -n "${BUILDBUDDY_API_KEY:-}" ]]; then
+            args+=("--remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY")
+          else
+            echo "BUILDBUDDY_API_KEY is not set; running without BuildBuddy remote header."
+          fi
+
+          bazel "${args[@]}"
