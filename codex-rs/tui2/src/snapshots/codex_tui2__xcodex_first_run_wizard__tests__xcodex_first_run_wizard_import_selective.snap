@@ -1,6 +1,5 @@
 ---
 source: tui2/src/xcodex_first_run_wizard.rs
-assertion_line: 1619
 expression: snapshot
 ---
 
@@ -8,7 +7,7 @@ expression: snapshot
 
   Import selected items from upstream codex (optional):
 
-  Import from: CODEX_HOME (press
+  Import from: CODEX_HOME (pres
 
   Select what to copy (Enter/Space toggles, a selects all):
 
