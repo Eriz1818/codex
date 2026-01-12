@@ -10,6 +10,7 @@ on:
   push:
     tags:
       - "xcodex-v*.*.*"
+      - "xcodex-v*.*.*-alpha.*"
 
 concurrency:
   group: ${{ github.workflow }}
@@ -290,16 +291,37 @@ jobs:
       contents: write
 
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: release-dist
           path: dist
+
+      - name: Prepare GitHub Release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.stage.outputs.version }}"
+          notes_src="docs/xcodex/releases/${version}.md"
+          notes_out="dist/release-notes.md"
+
+          if [[ -f "${notes_src}" ]]; then
+            cp "${notes_src}" "${notes_out}"
+          else
+            cat >"${notes_out}" <<EOF
+# Release notes: xcodex v${version}
+
+See \`codex-rs/common/src/whats_new.md\` and \`CHANGELOG.md\`.
+EOF
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ needs.stage.outputs.version }}
           tag_name: ${{ needs.stage.outputs.tag }}
+          body_path: dist/release-notes.md
           files: dist/**
           prerelease: ${{ contains(needs.stage.outputs.version, '-') }}
 

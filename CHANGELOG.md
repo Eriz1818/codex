@@ -7,6 +7,15 @@ This project follows SemVer (`xcodex-vX.Y.Z` / `xcodex-vX.Y.Z-alpha.N` tags) and
 - `@eriz1818/xcodex` (CLI wrapper + native `xcodex` binaries + bundled `rg`)
 - `@eriz1818/xcodex-responses-api-proxy` (native proxy binary)
 
+## 0.2.0
+
+Hooks and packaging improvements.
+
+- Hooks system: external hooks, Python Host (“py-box”) hooks, and PyO3 hooks (separately built).
+- Hooks tooling: guided setup (`xcodex hooks init`), SDK + sample installers, and `xcodex hooks test`.
+- Worktrees: `/worktree` for switching between git worktrees (plus shared dirs).
+- npm releases: publish `@eriz1818/xcodex` and `@eriz1818/xcodex-responses-api-proxy` via `xcodex-vX.Y.Z` tags.
+
 ## 0.1.0
 
 Initial public release of the `xCodex` fork.
