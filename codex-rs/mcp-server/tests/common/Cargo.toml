@@ -13,7 +13,6 @@ codex-core = { workspace = true }
 codex-mcp-server = { workspace = true }
 codex-utils-cargo-bin = { workspace = true }
 mcp-types = { workspace = true }
-os_info = { workspace = true }
 pretty_assertions = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

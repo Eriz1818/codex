@@ -158,7 +158,7 @@ jobs:
 
           docker run --rm \
             -v "${GITHUB_WORKSPACE}:/ws" \
-            python:3.11-slim \
+            python:3.11 \
             bash -lc '
               set -euo pipefail
 
