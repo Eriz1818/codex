@@ -305,11 +305,10 @@ jobs:
           if [[ -f "${notes_src}" ]]; then
             cp "${notes_src}" "${notes_out}"
           else
-            cat >"${notes_out}" <<EOF
-# Release notes: xcodex v${version}
-
-See \`codex-rs/common/src/whats_new.md\` and \`CHANGELOG.md\`.
-EOF
+            printf '%s\n\n%s\n' \
+              "# Release notes: xcodex v${version}" \
+              "See \`codex-rs/common/src/whats_new.md\` and \`CHANGELOG.md\`." \
+              >"${notes_out}"
           fi
 
       - name: Create GitHub Release
