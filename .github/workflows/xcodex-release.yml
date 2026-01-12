@@ -355,7 +355,7 @@ jobs:
 
           npx --no-install xcodex --version
           npx --no-install xcodex hooks init
-          npx --no-install xcodex hooks test --configured-only
+          npx --no-install xcodex hooks test all --configured-only
           npx --no-install xcodex-responses-api-proxy --help
 
   create-release:
