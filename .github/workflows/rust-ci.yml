@@ -63,7 +63,7 @@ jobs:
         with:
           components: rustfmt
       - name: cargo fmt
-        run: cargo fmt -- --config imports_granularity=Item --check
+        run: cargo fmt -- --check
       - name: Verify codegen for mcp-types
         run: ./mcp-types/check_lib_rs.py
       - name: Verify codegen for hooks schema/types
@@ -175,7 +175,7 @@ jobs:
               printf "%s" "{\"schema-version\":1,\"type\":\"tool-call-finished\",\"event-id\":\"e\",\"timestamp\":\"t\",\"thread-id\":\"th\",\"turn-id\":\"tu\",\"cwd\":\"/tmp\",\"model-request-id\":\"m\",\"attempt\":1,\"tool-name\":\"exec\",\"call-id\":\"c\",\"status\":\"completed\",\"duration-ms\":1,\"success\":true,\"output-bytes\":0,\"__marker__\":\"py\"}" > "${payload_path}"
 
               printf "%s" "{\"payload-path\":\"${payload_path}\"}" | python3 "${CODEX_HOME}/hooks/templates/python/log_jsonl.py"
-              grep -q "\"__marker__\":\"py\"" "${CODEX_HOME}/hooks.jsonl"
+              grep -Eq "\"__marker__\"\\s*:\\s*\"py\"" "${CODEX_HOME}/hooks.jsonl"
             '
 
       - name: Smoke test Node.js template (run)
@@ -465,7 +465,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get -y update -o Acquire::Retries=3
-          sudo apt-get -y install --no-install-recommends musl-tools pkg-config
+          sudo apt-get -y install --no-install-recommends musl-tools pkg-config gcc
 
       - name: Install cargo-chef
         if: ${{ matrix.profile == 'release' }}

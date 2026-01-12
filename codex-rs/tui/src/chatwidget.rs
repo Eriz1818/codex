@@ -2215,9 +2215,7 @@ impl ChatWidget {
                 kind: KeyEventKind::Press,
                 ..
             }
-        ) && self.queued_user_messages.is_empty()
-            && self.composer_is_empty()
-            && self.is_normal_backtrack_mode()
+        ) && self.is_normal_backtrack_mode()
         {
             let status_cell = self.status_menu_status_cell();
             let view = crate::bottom_pane::StatusMenuView::new(

@@ -2431,11 +2431,11 @@ fn set_dir_permissions(_path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn set_file_permissions(path: &Path, _file: &File) -> anyhow::Result<()> {
+fn set_file_permissions(_path: &Path, _file: &File) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
 }
