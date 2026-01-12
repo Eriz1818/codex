@@ -7,8 +7,7 @@
 //   cargo run -p codex-core --bin hooks_rust_sdk --features hooks-schema --quiet \
 //     > hooks-sdk/src/generated.rs
 
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
