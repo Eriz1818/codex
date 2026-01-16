@@ -89,7 +89,6 @@ impl ContextManager {
     pub(crate) fn raw_items(&self) -> &[ResponseItem] {
         &self.items
     }
-
     pub(crate) fn remove_first_item(&mut self) {
         if !self.items.is_empty() {
             // Remove the oldest item (front of the list). Items are ordered from

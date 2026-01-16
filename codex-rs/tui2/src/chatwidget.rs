@@ -447,7 +447,11 @@ pub(crate) struct ChatWidget {
     is_review_mode: bool,
     // Snapshot of token usage to restore after review mode exits.
     pre_review_token_info: Option<Option<TokenUsageInfo>>,
-    // Whether to add a final message separator after the last message
+    // Whether the next streamed assistant content should be preceded by a final message separator.
+    //
+    // This is set whenever we insert a visible history cell that conceptually belongs to a turn.
+    // The separator itself is only rendered if the turn recorded "work" activity (see
+    // `turn_summary`).
     needs_final_message_separator: bool,
     turn_summary: history_cell::TurnSummary,
     session_stats: crate::status::SessionStats,
@@ -1601,7 +1605,9 @@ impl ChatWidget {
         }
 
         if self.stream_controller.is_none() {
-            if self.needs_final_message_separator {
+            // If the previous turn inserted non-stream history (exec output, patch status, MCP
+            // calls), render a separator before starting the next streamed assistant message.
+            if self.needs_final_message_separator && !self.turn_summary.is_empty() {
                 let elapsed_seconds = self
                     .bottom_pane
                     .status_widget()
@@ -1622,7 +1628,11 @@ impl ChatWidget {
                     turn_summary,
                 ));
                 self.needs_final_message_separator = false;
+                self.turn_summary = history_cell::TurnSummary::default();
                 needs_redraw = true;
+            } else if self.needs_final_message_separator {
+                // Reset the flag even if we don't show separator (no work was done)
+                self.needs_final_message_separator = false;
             }
             // Streaming must not capture the current viewport width: width-derived wraps are
             // applied later, at render time, so the transcript can reflow on resize.
@@ -1697,7 +1707,6 @@ impl ChatWidget {
                 self.request_redraw();
             }
         }
-
         if should_stabilize {
             self.set_ramp_stage(crate::ramps::RampStage::Stabilizing);
         }

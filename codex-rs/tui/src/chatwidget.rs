@@ -497,7 +497,11 @@ pub(crate) struct ChatWidget {
     is_review_mode: bool,
     // Snapshot of token usage to restore after review mode exits.
     pre_review_token_info: Option<Option<TokenUsageInfo>>,
-    // Whether to add a final message separator after the last message
+    // Whether the next streamed assistant content should be preceded by a final message separator.
+    //
+    // This is set whenever we insert a visible history cell that conceptually belongs to a turn.
+    // The separator itself is only rendered if the turn recorded "work" activity (see
+    // `turn_summary`).
     needs_final_message_separator: bool,
     turn_summary: history_cell::TurnSummary,
     session_stats: crate::status::SessionStats,
@@ -1757,7 +1761,9 @@ impl ChatWidget {
         }
 
         if self.stream_controller.is_none() {
-            if self.needs_final_message_separator {
+            // If the previous turn inserted non-stream history (exec output, patch status, MCP
+            // calls), render a separator before starting the next streamed assistant message.
+            if self.needs_final_message_separator && !self.turn_summary.is_empty() {
                 let elapsed_seconds = self
                     .bottom_pane
                     .status_widget()
@@ -1777,6 +1783,10 @@ impl ChatWidget {
                     completion_label,
                     turn_summary,
                 ));
+                self.needs_final_message_separator = false;
+                self.turn_summary = history_cell::TurnSummary::default();
+            } else if self.needs_final_message_separator {
+                // Reset the flag even if we don't show separator (no work was done)
                 self.needs_final_message_separator = false;
             }
             self.stream_controller = Some(StreamController::new(
@@ -1850,7 +1860,6 @@ impl ChatWidget {
                 self.request_redraw();
             }
         }
-
         if should_stabilize {
             self.set_ramp_stage(crate::ramps::RampStage::Stabilizing);
         }
@@ -2380,10 +2389,26 @@ impl ChatWidget {
                 modifiers,
                 kind: KeyEventKind::Press,
                 ..
-            } if c.eq_ignore_ascii_case(&'v')
-                && modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            } if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                && c.eq_ignore_ascii_case(&'v') =>
             {
-                self.paste_image_from_clipboard();
+                match paste_image_to_temp_png() {
+                    Ok((path, info)) => {
+                        tracing::debug!(
+                            "pasted image size={}x{} format={}",
+                            info.width,
+                            info.height,
+                            info.encoded_format.label()
+                        );
+                        self.attach_image(path);
+                    }
+                    Err(err) => {
+                        tracing::warn!("failed to paste image: {err}");
+                        self.add_to_history(history_cell::new_error_event(format!(
+                            "Failed to paste image: {err}",
+                        )));
+                    }
+                }
                 return;
             }
             other if other.kind == KeyEventKind::Press => {
@@ -2495,32 +2520,6 @@ impl ChatWidget {
         tracing::info!("attach_image path={path:?}");
         self.bottom_pane.attach_image(path);
         self.request_redraw();
-    }
-
-    /// Attempt to attach an image from the system clipboard.
-    ///
-    /// This is a best-effort path used when we receive an empty paste event,
-    /// which some terminals emit when the clipboard contains non-text data
-    /// (like images). When the clipboard can't be read or no image exists,
-    /// surface a helpful follow-up so the user can retry with a file path.
-    fn paste_image_from_clipboard(&mut self) {
-        match paste_image_to_temp_png() {
-            Ok((path, info)) => {
-                tracing::debug!(
-                    "pasted image size={}x{} format={}",
-                    info.width,
-                    info.height,
-                    info.encoded_format.label()
-                );
-                self.attach_image(path);
-            }
-            Err(err) => {
-                tracing::warn!("failed to paste image: {err}");
-                self.add_to_history(history_cell::new_error_event(format!(
-                    "Failed to paste image: {err}. Try saving the image to a file and pasting the file path instead.",
-                )));
-            }
-        }
     }
 
     pub(crate) fn composer_text_with_pending(&self) -> String {
@@ -2867,20 +2866,6 @@ impl ChatWidget {
 
     pub(crate) fn handle_paste(&mut self, text: String) {
         self.bottom_pane.handle_paste(text);
-    }
-
-    /// Route paste events through image detection.
-    ///
-    /// Terminals vary in how they represent paste: some emit an empty paste
-    /// payload when the clipboard isn't text (common for image-only clipboard
-    /// contents). Treat the empty payload as a hint to attempt a clipboard
-    /// image read; otherwise, fall back to text handling.
-    pub(crate) fn handle_paste_event(&mut self, text: String) {
-        if text.is_empty() {
-            self.paste_image_from_clipboard();
-        } else {
-            self.handle_paste(text);
-        }
     }
 
     // Returns true if caller should skip rendering this frame (a future frame is scheduled).

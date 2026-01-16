@@ -1,6 +1,6 @@
 use anyhow::Result;
 use app_test_support::McpProcess;
-use app_test_support::create_fake_rollout;
+use app_test_support::create_fake_rollout_with_text_elements;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::to_response;
 use codex_app_server_protocol::JSONRPCResponse;
@@ -15,7 +15,10 @@ use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::user_input::ByteRange;
+use codex_protocol::user_input::TextElement;
 use core_test_support::skip_if_no_network;
+use pretty_assertions::assert_eq;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -76,11 +79,19 @@ async fn thread_resume_returns_rollout_history() -> Result<()> {
     create_config_toml(codex_home.path(), &server.uri())?;
 
     let preview = "Saved user message";
-    let conversation_id = create_fake_rollout(
+    let text_elements = vec![TextElement {
+        byte_range: ByteRange { start: 0, end: 5 },
+        placeholder: Some("<note>".into()),
+    }];
+    let conversation_id = create_fake_rollout_with_text_elements(
         codex_home.path(),
         "2025-01-05T12-00-00",
         "2025-01-05T12:00:00Z",
         preview,
+        text_elements
+            .iter()
+            .map(|elem| serde_json::to_value(elem).expect("serialize text element"))
+            .collect(),
         Some("mock_provider"),
         None,
     )?;
@@ -124,7 +135,7 @@ async fn thread_resume_returns_rollout_history() -> Result<()> {
                 content,
                 &vec![UserInput::Text {
                     text: preview.to_string(),
-                    text_elements: Vec::new(),
+                    text_elements: text_elements.clone().into_iter().map(Into::into).collect(),
                 }]
             );
         }
