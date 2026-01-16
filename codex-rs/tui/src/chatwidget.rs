@@ -1290,7 +1290,7 @@ impl ChatWidget {
             if can_retry_in_place {
                 message.push_str(" Press `r` or run `/mcp retry failed` to retry.");
             } else {
-                message.push_str(" Run `/mcp retry failed` to retry.");
+                message.push_str(" Press `r` or run `/mcp retry failed` to retry.");
             }
             if let Some(tip) = Self::timeout_tip_for_failures(&ev.failed) {
                 message.push(' ');

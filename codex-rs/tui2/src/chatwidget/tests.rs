@@ -570,8 +570,8 @@ async fn mcp_startup_complete_logs_warning_when_working() {
         "expected retry hint; got: {rendered_text}"
     );
     assert!(
-        !rendered_text.contains("Press `r`"),
-        "expected no `r` key hint while working; got: {rendered_text}"
+        rendered_text.contains("Press `r`"),
+        "expected `r` key hint while working; got: {rendered_text}"
     );
 }
 
