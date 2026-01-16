@@ -293,10 +293,19 @@ impl AsyncManagedClient {
                 return Err(error.into());
             }
 
-            let client = match make_rmcp_client(&server_name, config.transport, store_mode)
-                .or_cancel(&cancel_token)
-                .await
-            {
+            let startup_timeout = config.startup_timeout_sec.or(Some(DEFAULT_STARTUP_TIMEOUT));
+
+            let client_fut = make_rmcp_client(&server_name, config.transport, store_mode);
+            let client_result = match startup_timeout {
+                Some(duration) => {
+                    tokio::time::timeout(duration, client_fut.or_cancel(&cancel_token))
+                        .await
+                        .map_err(|_| anyhow!("request timed out after {duration:?}"))?
+                }
+                None => client_fut.or_cancel(&cancel_token).await,
+            };
+
+            let client = match client_result {
                 Ok(Ok(client)) => Arc::new(client),
                 Ok(Err(err)) => return Err(err),
                 Err(CancelErr::Cancelled) => return Err(StartupOutcomeError::Cancelled),
@@ -304,7 +313,7 @@ impl AsyncManagedClient {
             match start_server_task(
                 server_name,
                 client,
-                config.startup_timeout_sec.or(Some(DEFAULT_STARTUP_TIMEOUT)),
+                startup_timeout,
                 config.tool_timeout_sec.unwrap_or(DEFAULT_TOOL_TIMEOUT),
                 tool_filter,
                 tx_event,
