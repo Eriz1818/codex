@@ -123,6 +123,10 @@ pub struct ResumeArgs {
     #[arg(long = "last", default_value_t = false)]
     pub last: bool,
 
+    /// Show all sessions (disables cwd filtering).
+    #[arg(long = "all", default_value_t = false)]
+    pub all: bool,
+
     /// Read the prompt to send after resuming from a file (useful for large prompts).
     #[arg(long = "file", value_name = "FILE", value_hint = clap::ValueHint::FilePath, conflicts_with = "prompt")]
     pub prompt_file: Option<PathBuf>,

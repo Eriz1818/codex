@@ -58,7 +58,7 @@ impl SlashCommand {
             SlashCommand::Thoughts => "toggle showing agent thoughts/reasoning (persists)",
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Resume => "resume a saved chat",
-            SlashCommand::Fork => "fork a saved chat",
+            SlashCommand::Fork => "fork the current chat",
             // SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit xcodex",
             SlashCommand::Diff => "show git diff (including untracked files)",

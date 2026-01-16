@@ -55,8 +55,9 @@ pub(crate) enum AppEvent {
 
     /// Open transcript overlay (same as pressing Ctrl+T).
     OpenTranscriptOverlay,
-    /// Open the fork picker inside the running TUI session.
-    OpenForkPicker,
+
+    /// Fork the current session into a new thread.
+    ForkCurrentSession,
 
     /// Request to exit the application.
     ///

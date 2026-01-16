@@ -1488,15 +1488,11 @@ pub struct HooksCommandHookConfig {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum HookPayloadFormat {
+    #[default]
     Xcodex,
     Claude,
-}
-
-impl Default for HookPayloadFormat {
-    fn default() -> Self {
-        Self::Xcodex
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
